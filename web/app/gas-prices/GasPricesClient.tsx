@@ -8,7 +8,7 @@ import {
 import ScopeToggle from "@/components/ScopeToggle";
 import { US_STATES } from "@/lib/constants";
 
-const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 300, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
+const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 400, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
 import type { GasPriceRow, SteoRow, AaaStateRow } from "@/lib/queries";
 import { fmtDollars } from "@/lib/utils";
 
@@ -219,7 +219,7 @@ export default function GasPricesClient({
         </div>
 
         {/* Chart */}
-        <div className="chart-card" ref={chartRef} style={{ padding: "14px 16px 10px", display: "flex", flexDirection: "column" }}>
+        <div className="chart-card" ref={chartRef} style={{ padding: "14px 16px 10px" }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
@@ -268,7 +268,7 @@ export default function GasPricesClient({
             })}
           </div>
 
-          <div style={{ flex: 1, minHeight: 220 }}>
+          <div style={{ height: 360 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />

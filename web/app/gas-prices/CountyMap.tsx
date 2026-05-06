@@ -342,7 +342,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
         </div>
       )}
       <div style={{ position: "relative" }}>
-        <div ref={mapContainer} style={{ width: "100%", height: 300, borderRadius: 4 }} />
+        <div ref={mapContainer} style={{ width: "100%", height: 400, borderRadius: 4 }} />
 
         {/* Show/hide panel button */}
         {selectedState && countyData.length > 0 && !showPanel && (
