@@ -1,14 +1,13 @@
 import { getNationalEnergy } from "@/lib/queries";
 import EnergyClient from "./EnergyClient";
 
-// Key MSN codes for production by source — will be verified after backfill
-// If these don't match, check: SELECT DISTINCT series_id, series_name FROM national_energy WHERE series_id LIKE '%PRP%' OR series_id LIKE '%ETV%'
+// MSN codes for production by source (Trillion Btu)
 const PRODUCTION_SERIES = [
-  "PAPRP",  // Petroleum production
-  "NGPRP",  // Natural gas production
-  "CLPRP",  // Coal production
-  "NUETV",  // Nuclear electric power
-  "REPRP",  // Renewable energy production
+  "PAPRBUS",  // Crude Oil Production
+  "NGPRBUS",  // Natural Gas (Dry) Production
+  "CLPRBUS",  // Coal Production
+  "NUETBUS",  // Nuclear Electric Power
+  "REPRBUS",  // Total Renewable Energy Production
 ];
 
 export default function EnergyPage() {

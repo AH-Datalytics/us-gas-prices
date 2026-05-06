@@ -15,11 +15,11 @@ interface Props {
 }
 
 const SOURCE_MAP: Record<string, string> = {
-  PAPRP: "petroleum",
-  NGPRP: "natural_gas",
-  CLPRP: "coal",
-  NUETV: "nuclear",
-  REPRP: "renewable",
+  PAPRBUS: "petroleum",
+  NGPRBUS: "natural_gas",
+  CLPRBUS: "coal",
+  NUETBUS: "nuclear",
+  REPRBUS: "renewable",
 };
 
 const SOURCE_LABELS: Record<string, string> = {
