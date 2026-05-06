@@ -32,12 +32,18 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const [loading, setLoading] = useState(true);
-  const [level, setLevel] = useState<"state" | "county">("county");
+  const [level, setLevel] = useState<"state" | "county">("state");
   const levelRef = useRef(level);
   levelRef.current = level;
+  const aaaStatesRef = useRef(aaaStates);
+  aaaStatesRef.current = aaaStates;
+  const onStateClickRef = useRef(onStateClick);
+  onStateClickRef.current = onStateClick;
 
   useEffect(() => {
-    if (!mapContainer.current || map.current) return;
+    if (!mapContainer.current) return;
+    // Clean up any existing map
+    if (map.current) { map.current.remove(); map.current = null; }
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
@@ -50,8 +56,8 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
           paint: { "background-color": "#e8f0f8" },
         }],
       },
-      bounds: [[-128, 23], [-64, 50]],
-      fitBoundsOptions: { padding: 10 },
+      bounds: [[-130, 22], [-62, 52]],
+      fitBoundsOptions: { padding: 20 },
       minZoom: 2,
       maxZoom: 10,
       attributionControl: false,
@@ -66,10 +72,10 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
 
       // Inject state prices
       const statePriceMap = new Map<string, number>();
-      for (const s of aaaStates) {
+      for (const s of aaaStatesRef.current) {
         statePriceMap.set(s.state_name, s.regular ?? 0);
       }
-      const statePrices = aaaStates.filter((s) => s.regular != null).map((s) => s.regular!).sort((a, b) => a - b);
+      const statePrices = aaaStatesRef.current.filter((s) => s.regular != null).map((s) => s.regular!).sort((a, b) => a - b);
       const sp10 = statePrices[Math.floor(statePrices.length * 0.1)] || 0;
       const sp30 = statePrices[Math.floor(statePrices.length * 0.3)] || 0;
       const sp50 = statePrices[Math.floor(statePrices.length * 0.5)] || 0;
@@ -98,7 +104,7 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
           ],
           "fill-opacity": 0.85,
         },
-        layout: { visibility: "none" },
+        layout: { visibility: "visible" },
       });
 
       // State borders (always visible)
@@ -155,7 +161,7 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
           ],
           "fill-opacity": 0.85,
         },
-        layout: { visibility: "visible" },
+        layout: { visibility: "none" },
       });
 
       // County borders
@@ -164,7 +170,7 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
         type: "line",
         source: "counties",
         paint: { "line-color": "#ffffff", "line-width": 0.3, "line-opacity": 0.5 },
-        layout: { visibility: "visible" },
+        layout: { visibility: "none" },
       });
 
       // Move state borders on top
@@ -198,27 +204,28 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
 
       // Click
       m.on("click", "county-fill", (e) => {
-        if (!onStateClick || !e.features?.length) return;
+        if (!onStateClickRef.current || !e.features?.length) return;
         const stateFips = e.features[0].properties?.STATE;
         const FIPS_TO_ABBR: Record<string, string> = Object.fromEntries(
           Object.entries(STATE_FIPS).map(([k, v]) => [v, k])
         );
         const abbr = FIPS_TO_ABBR[stateFips];
-        if (abbr) onStateClick(abbr);
+        if (abbr) onStateClickRef.current?.(abbr);
       });
 
       m.on("click", "state-fill", (e) => {
-        if (!onStateClick || !e.features?.length) return;
+        if (!onStateClickRef.current || !e.features?.length) return;
         const name = e.features[0].properties?.name;
-        const match = aaaStates.find((s) => s.state_name === name);
-        if (match) onStateClick(match.state);
+        const match = aaaStatesRef.current.find((s) => s.state_name === name);
+        if (match) onStateClickRef.current?.(match.state);
       });
 
       setLoading(false);
     });
 
     return () => { m.remove(); map.current = null; };
-  }, [aaaStates, onStateClick]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Toggle layer visibility when level changes
   useEffect(() => {
@@ -259,7 +266,7 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
           Loading map...
         </div>
       )}
-      <div ref={mapContainer} style={{ width: "100%", height: 480, borderRadius: 4 }} />
+      <div ref={mapContainer} style={{ width: "100%", height: 340, borderRadius: 4 }} />
       {/* Legend */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
         <span>Lower</span>

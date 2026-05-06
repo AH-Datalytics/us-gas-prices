@@ -8,10 +8,10 @@ export default function TopBar() {
       </Link>
       <div className="flex-1 text-center">
         <span style={{ fontSize: 24, fontWeight: 800, color: "var(--blue-dark)", fontFamily: "var(--font-display)", letterSpacing: -0.3 }}>
-          US Energy{" "}
+          US Gas{" "}
         </span>
         <span style={{ fontSize: 24, fontWeight: 600, color: "var(--blue-mid)", fontFamily: "var(--font-display)", letterSpacing: -0.3 }}>
-          Explorer
+          Prices
         </span>
       </div>
     </header>

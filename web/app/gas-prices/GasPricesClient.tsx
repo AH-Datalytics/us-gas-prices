@@ -1,17 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import Link from "next/link";
+import { useState, useRef } from "react";
+import dynamic from "next/dynamic";
 import {
   ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
-import ChartCard from "@/components/ChartCard";
 import ScopeToggle from "@/components/ScopeToggle";
-import EmptyState from "@/components/EmptyState";
-import CountyMap from "./CountyMap";
 import { US_STATES } from "@/lib/constants";
+
+const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 340, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
 import type { GasPriceRow, SteoRow, AaaStateRow } from "@/lib/queries";
-import { fmtDollars, fmtMonth } from "@/lib/utils";
+import { fmtDollars } from "@/lib/utils";
 
 interface Props {
   nationalRegular: GasPriceRow[];
@@ -21,359 +20,233 @@ interface Props {
   aaaStates: AaaStateRow[];
 }
 
-// ─── Main Component ───
+function downloadCsv(data: { period: string; price: number | null; forecast: number | null }[], filename: string) {
+  const header = "Period,Price,Forecast";
+  const rows = data.map((r) => `${r.period},${r.price ?? ""},${r.forecast ?? ""}`);
+  const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadMapCsv(states: AaaStateRow[], filename: string) {
+  const header = "State,Code,Regular,Midgrade,Premium,Diesel,Date";
+  const rows = states.map((s) => `${s.state_name},${s.state},${s.regular ?? ""},${s.midgrade ?? ""},${s.premium ?? ""},${s.diesel ?? ""},${s.date}`);
+  const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadJpeg(el: HTMLElement | null, filename: string) {
+  if (!el) return;
+  const { toJpeg } = await import("html-to-image");
+  const url = await toJpeg(el, { backgroundColor: "#F5F0E8", pixelRatio: 2, quality: 0.95 });
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+}
+
+/** Format YYYY-MM-DD or YYYY-MM to short label */
+function fmtAxisLabel(v: string): string {
+  const p = v.split("-");
+  if (p.length < 2) return v;
+  const names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const mon = names[parseInt(p[1]) - 1] || p[1];
+  return `${mon} ${p[0]}`;
+}
 
 export default function GasPricesClient({
   nationalRegular, nationalDiesel, steoGas, steoDiesel, aaaStates,
 }: Props) {
-  const [scope, setScope] = useState<"national" | "state" | "city">("national");
   const [fuel, setFuel] = useState<"regular_gas" | "diesel">("regular_gas");
   const [showForecast, setShowForecast] = useState(false);
   const [selectedState, setSelectedState] = useState("");
-  const [selectedCity, setSelectedCity] = useState("");
 
-  // State-level EIA data (fetched client-side when state selected)
-  const [stateData, setStateData] = useState<GasPriceRow[]>([]);
-  const [cityList, setCityList] = useState<{ area_id: string; area_name: string }[]>([]);
-  const [cityData, setCityData] = useState<GasPriceRow[]>([]);
-  const [countyData, setCountyData] = useState<{ county: string; price: number }[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Date range — default last 2 years
+  const now = new Date();
+  const defaultStart = `${now.getFullYear() - 2}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [startDate, setStartDate] = useState(defaultStart);
+  const [endDate, setEndDate] = useState("");
 
-  // Fetch state data when selected
-  useEffect(() => {
-    if (!selectedState) return;
-    setLoading(true);
-    fetch(`/api/gas-state?state=${selectedState}&fuel=${fuel}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setStateData(d.prices || []);
-        setCityList(d.cities || []);
-        setCountyData(d.counties || []);
-      })
-      .finally(() => setLoading(false));
-  }, [selectedState, fuel]);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
 
-  // Fetch city data when selected
-  useEffect(() => {
-    if (!selectedCity) return;
-    setLoading(true);
-    fetch(`/api/gas-city?city=${selectedCity}&fuel=${fuel}`)
-      .then((r) => r.json())
-      .then((d) => setCityData(d.prices || []))
-      .finally(() => setLoading(false));
-  }, [selectedCity, fuel]);
-
-  const priceData = fuel === "regular_gas" ? nationalRegular : nationalDiesel;
+  const allPriceData = fuel === "regular_gas" ? nationalRegular : nationalDiesel;
   const steoData = fuel === "regular_gas" ? steoGas : steoDiesel;
 
-  // Build national chart data
-  const nationalChart: { period: string; price: number | null; forecast: number | null }[] = priceData.map((r) => ({
+  // Filter by date range
+  const priceData = allPriceData.filter((r) => {
+    if (startDate && r.period < startDate) return false;
+    if (endDate && r.period > endDate) return false;
+    return true;
+  });
+
+  // Build chart data
+  const chartData: { period: string; price: number | null; forecast: number | null }[] = priceData.map((r) => ({
     period: r.period, price: r.price, forecast: null,
   }));
   if (showForecast && steoData.length > 0) {
     const lastActual = priceData[priceData.length - 1]?.period || "";
-    const bridgeIdx = nationalChart.findIndex((d) => d.period === lastActual);
-    if (bridgeIdx >= 0) nationalChart[bridgeIdx].forecast = nationalChart[bridgeIdx].price;
+    const bridgeIdx = chartData.findIndex((d) => d.period === lastActual);
+    if (bridgeIdx >= 0) chartData[bridgeIdx].forecast = chartData[bridgeIdx].price;
     for (const row of steoData) {
       if (row.period > lastActual) {
-        nationalChart.push({ period: row.period, price: null, forecast: row.value });
+        chartData.push({ period: row.period, price: null, forecast: row.value });
       }
     }
   }
 
-  // Build state comparison chart
-  const nationalMap = new Map(priceData.map((r) => [r.period, r.price]));
-  const stateChart = stateData.map((r) => ({
-    period: r.period,
-    state: r.price,
-    national: nationalMap.get(r.period) ?? null,
-  }));
-
-  // Build city comparison chart
-  const cityChart = cityData.map((r) => ({
-    period: r.period,
-    city: r.price,
-    national: nationalMap.get(r.period) ?? null,
-  }));
-
-  const latestNational = priceData[priceData.length - 1];
+  const latestNational = allPriceData[allPriceData.length - 1];
   const sortedStates = [...aaaStates].sort((a, b) => (b.regular ?? 0) - (a.regular ?? 0));
-  const selectedStateName = US_STATES.find((s) => s.code === selectedState)?.name || selectedState;
+  const selectedAaa = aaaStates.find((s) => s.state === selectedState);
+  const selectedStateName = US_STATES.find((s) => s.code === selectedState)?.name || "";
 
-  function handleStateSelect(code: string) {
-    setSelectedState(code);
-    setSelectedCity("");
-    setScope("state");
-  }
+  const exportBtnClass = "text-[10px] text-[var(--blue-mid)] hover:text-[var(--blue-main)] underline decoration-dotted underline-offset-2 cursor-pointer transition-colors";
 
   return (
-    <div className="max-w-6xl mx-auto px-8 py-6">
-      <Link href="/" className="back-link mb-4">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Back
-      </Link>
+    <div style={{ maxWidth: 1400 }} className="mx-auto px-6 py-4">
+      {/* Map + Chart side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        {/* Map */}
+        <div className="chart-card" ref={mapRef} style={{ padding: "16px 20px 12px" }}>
+          <div className="flex items-center justify-between mb-1">
+            <div>
+              <h2 style={{ marginBottom: 0, fontSize: 16 }}>US Gas Prices</h2>
+              <div className="subtitle" style={{ marginBottom: 2, fontSize: 11 }}>Click a state for details</div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button className={exportBtnClass} onClick={() => downloadMapCsv(sortedStates, "gas-prices-by-state.csv")}>CSV</button>
+              <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, "gas-prices-map.jpg")}>JPEG</button>
+            </div>
+          </div>
+          <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} />
+          <div className="source" style={{ marginTop: 4 }}>Source: AAA Fuel Prices (130,000+ stations)</div>
+        </div>
 
-      <div className="flex items-center justify-between mb-6 mt-2">
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: "var(--blue-dark)", fontFamily: "var(--font-display)" }}>
-          Gas Prices
-        </h1>
-        <div className="flex items-center gap-3">
-          <ScopeToggle
-            options={[
-              { value: "national", label: "National" },
-              { value: "state", label: "State" },
-              { value: "city", label: "City" },
-            ]}
-            active={scope}
-            onChange={(v) => setScope(v as "national" | "state" | "city")}
-          />
-          <ScopeToggle
-            options={[
-              { value: "regular_gas", label: "Regular" },
-              { value: "diesel", label: "Diesel" },
-            ]}
-            active={fuel}
-            onChange={(v) => setFuel(v as "regular_gas" | "diesel")}
-          />
-          <button
-            className={`forecast-btn ${showForecast ? "active" : ""}`}
-            onClick={() => setShowForecast(!showForecast)}
-          >
-            {showForecast ? "Hide" : "Show"} Forecast
-          </button>
+        {/* Chart */}
+        <div className="chart-card" ref={chartRef} style={{ padding: "16px 20px 12px", display: "flex", flexDirection: "column" }}>
+          {/* Header row */}
+          <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+            <div>
+              <h2 style={{ marginBottom: 0, fontSize: 16 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
+              <div className="subtitle" style={{ marginBottom: 0, fontSize: 11 }}>Weekly, $/gallon</div>
+            </div>
+            <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+              <button className={exportBtnClass} onClick={() => downloadCsv(chartData, `gas-prices-${fuel}.csv`)}>CSV</button>
+              <button className={exportBtnClass} onClick={() => downloadJpeg(chartRef.current, `gas-prices-${fuel}.jpg`)}>JPEG</button>
+              <span style={{ width: 1, height: 14, background: "var(--blue-light)", margin: "0 2px" }} />
+              <ScopeToggle
+                options={[
+                  { value: "regular_gas", label: "Regular" },
+                  { value: "diesel", label: "Diesel" },
+                ]}
+                active={fuel}
+                onChange={(v) => setFuel(v as "regular_gas" | "diesel")}
+              />
+              <button
+                className={`forecast-btn ${showForecast ? "active" : ""}`}
+                onClick={() => setShowForecast(!showForecast)}
+              >
+                Forecast
+              </button>
+            </div>
+          </div>
+
+          {/* Date range presets */}
+          <div className="flex items-center gap-1.5" style={{ marginBottom: 6 }}>
+            {[
+              { label: "3M", months: 3 },
+              { label: "6M", months: 6 },
+              { label: "1Y", months: 12 },
+              { label: "5Y", months: 60 },
+              { label: "10Y", months: 120 },
+              { label: "All", months: 0 },
+            ].map((p) => {
+              const pStart = p.months > 0
+                ? `${new Date(now.getFullYear(), now.getMonth() - p.months, 1).getFullYear()}-${String(new Date(now.getFullYear(), now.getMonth() - p.months, 1).getMonth() + 1).padStart(2, "0")}`
+                : "";
+              const isActive = startDate === pStart;
+              return (
+                <button key={p.label} className={`preset-btn ${isActive ? "active" : ""}`}
+                  style={{ fontSize: 9, padding: "2px 8px" }}
+                  onClick={() => { setStartDate(pStart); setEndDate(""); }}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Chart — flex fill */}
+          <div style={{ flex: 1, minHeight: 280 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />
+                <XAxis dataKey="period"
+                  tick={{ fontSize: 10, fill: "#5a6a7a" }}
+                  tickLine={false}
+                  axisLine={{ stroke: "#ddd8ce" }}
+                  ticks={(() => {
+                    // Pick evenly spaced month ticks based on data range
+                    if (chartData.length === 0) return [];
+                    const totalMonths = chartData.length / 4.3; // ~4.3 weeks per month
+                    const step = Math.max(1, Math.round(totalMonths / 8));
+                    const seen = new Set<string>();
+                    const ticks: string[] = [];
+                    for (const d of chartData) {
+                      const ym = d.period.slice(0, 7); // YYYY-MM
+                      if (!seen.has(ym)) {
+                        seen.add(ym);
+                        if (seen.size % step === 1 || step === 1) ticks.push(d.period);
+                      }
+                    }
+                    return ticks;
+                  })()}
+                  tickFormatter={fmtAxisLabel}
+                  angle={-30}
+                  textAnchor="end"
+                  height={40}
+                />
+                <YAxis tick={{ fontSize: 10, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
+                  tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={["auto", "auto"]}
+                />
+                <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
+                  formatter={(value: unknown, name: unknown) => [value != null ? `$${Number(value).toFixed(3)}` : "\u2014", name === "price" ? "Actual" : "Forecast"]}
+                  labelFormatter={(label: unknown) => String(label)}
+                />
+                <Line type="monotone" dataKey="price" stroke="#a03030" strokeWidth={2} dot={false} connectNulls={false} />
+                {showForecast && <Line type="monotone" dataKey="forecast" stroke="#a03030" strokeWidth={2} strokeDasharray="6 4" dot={false} connectNulls />}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="source">Source: EIA Weekly Retail Gasoline and Diesel Prices + STEO</div>
         </div>
       </div>
 
-      {/* ─── NATIONAL VIEW ─── */}
-      {scope === "national" && (
-        <>
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            <div className="stat-box">
-              <div className="stat-label">National Average</div>
-              <div className="stat-value">{latestNational ? fmtDollars(latestNational.price) : "\u2014"}</div>
-              <div className="stat-sub">per gallon &middot; {latestNational?.period || ""}</div>
-            </div>
-            <div className="stat-box">
-              <div className="stat-label">Highest State</div>
-              <div className="stat-value">{sortedStates[0] ? fmtDollars(sortedStates[0].regular) : "\u2014"}</div>
-              <div className="stat-sub">{sortedStates[0]?.state_name || ""}</div>
-            </div>
-            <div className="stat-box">
-              <div className="stat-label">Lowest State</div>
-              <div className="stat-value">{sortedStates.length > 0 ? fmtDollars(sortedStates[sortedStates.length - 1].regular) : "\u2014"}</div>
-              <div className="stat-sub">{sortedStates[sortedStates.length - 1]?.state_name || ""}</div>
-            </div>
+      {/* Stat cards at bottom */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="stat-box">
+          <div className="stat-label">National Average</div>
+          <div className="stat-value">{latestNational ? fmtDollars(latestNational.price) : "\u2014"}</div>
+          <div className="stat-sub">per gallon &middot; {latestNational?.period || ""}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Highest State</div>
+          <div className="stat-value">{sortedStates[0] ? fmtDollars(sortedStates[0].regular) : "\u2014"}</div>
+          <div className="stat-sub">{sortedStates[0]?.state_name || ""}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">{selectedStateName || "Lowest State"}</div>
+          <div className="stat-value">
+            {selectedAaa ? fmtDollars(selectedAaa.regular) : sortedStates.length > 0 ? fmtDollars(sortedStates[sortedStates.length - 1].regular) : "\u2014"}
           </div>
-
-          {/* County Choropleth Map */}
-          <div className="mb-6">
-            <ChartCard title="Gas Prices by County" subtitle="Today's average regular gasoline price per gallon — click a county to view state details" source="AAA Fuel Prices (130,000+ stations)">
-              <CountyMap aaaStates={aaaStates} onStateClick={handleStateSelect} />
-            </ChartCard>
+          <div className="stat-sub">
+            {selectedAaa ? "click map to change" : sortedStates[sortedStates.length - 1]?.state_name || ""}
           </div>
-
-          {/* National trend */}
-          <ChartCard
-            title={`U.S. ${fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices`}
-            subtitle="Weekly average, dollars per gallon"
-            source="EIA Weekly Retail Gasoline and Diesel Prices + STEO"
-          >
-            <TrendChart data={nationalChart} showForecast={showForecast} />
-          </ChartCard>
-
-          {/* State rankings table */}
-          {sortedStates.length > 0 && (
-            <div className="mt-6">
-              <ChartCard title="All 50 States + DC" subtitle="Today's regular gasoline price" source="AAA Fuel Prices">
-                <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: "var(--color-chart-text)" }}>
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: "2px solid #2d3d4a", fontWeight: 700 }}>#</th>
-                        <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: "2px solid #2d3d4a", fontWeight: 700 }}>State</th>
-                        <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "2px solid #2d3d4a", fontWeight: 700 }}>Regular</th>
-                        <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "2px solid #2d3d4a", fontWeight: 700 }}>Diesel</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedStates.map((row, i) => (
-                        <tr key={row.state} style={{ cursor: "pointer" }} onClick={() => handleStateSelect(row.state)}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--blue-pale)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
-                        >
-                          <td style={{ padding: "4px 12px", borderBottom: "1px solid #ddd8ce" }}>{i + 1}</td>
-                          <td style={{ padding: "4px 12px", borderBottom: "1px solid #ddd8ce", color: "var(--blue-main)", fontWeight: 600 }}>
-                            {row.state_name}
-                          </td>
-                          <td style={{ padding: "4px 12px", borderBottom: "1px solid #ddd8ce", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                            {fmtDollars(row.regular)}
-                          </td>
-                          <td style={{ padding: "4px 12px", borderBottom: "1px solid #ddd8ce", textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--blue-mid)" }}>
-                            {fmtDollars(row.diesel)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </ChartCard>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ─── STATE VIEW ─── */}
-      {scope === "state" && (
-        <>
-          <div className="control-bar">
-            <select value={selectedState} onChange={(e) => { setSelectedState(e.target.value); setSelectedCity(""); }}
-              style={{ background: "var(--color-surface)", border: "1.5px solid var(--blue-light)", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 500, color: "var(--blue-dark)", fontFamily: "inherit" }}
-            >
-              <option value="">Select a state...</option>
-              {US_STATES.map((s) => (<option key={s.code} value={s.code}>{s.name}</option>))}
-            </select>
-          </div>
-
-          {!selectedState && <EmptyState message="Select a state to view prices" />}
-
-          {selectedState && loading && <div className="text-center py-8" style={{ color: "var(--blue-mid)", fontSize: 13 }}>Loading {selectedStateName}...</div>}
-
-          {selectedState && !loading && (
-            <>
-              {/* County prices */}
-              {countyData.length > 0 && (
-                <div className="mb-6">
-                  <ChartCard title={`${selectedStateName} County Prices`} subtitle="Today's regular gasoline average" source="AAA Fuel Prices">
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 2, maxHeight: 300, overflowY: "auto" }}>
-                      {countyData.map((c) => (
-                        <div key={c.county} style={{ display: "flex", justifyContent: "space-between", padding: "3px 8px", fontSize: 11, borderBottom: "1px solid #eee" }}>
-                          <span style={{ color: "var(--blue-dark)" }}>{c.county}</span>
-                          <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtDollars(c.price)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </ChartCard>
-                </div>
-              )}
-
-              {/* State trend vs national (EIA data) */}
-              {stateChart.length > 0 ? (
-                <ChartCard title={`${selectedStateName} vs. National Average`} subtitle="Weekly, dollars per gallon (EIA)" source="EIA Weekly Retail Gasoline and Diesel Prices">
-                  <ComparisonChart data={stateChart} label={selectedStateName} comparisonKey="state" />
-                </ChartCard>
-              ) : (
-                <div className="info-callout">
-                  The EIA only publishes weekly price history for 9 select states. {selectedStateName} is not one of them. County prices above are from AAA (today only).
-                </div>
-              )}
-
-              {/* City list */}
-              {cityList.length > 0 && (
-                <div className="mt-4">
-                  <ChartCard title="Cities" subtitle="Click to view trend">
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {cityList.map((c) => (
-                        <button key={c.area_id} onClick={() => { setSelectedCity(c.area_id); setScope("city"); }}
-                          className="preset-btn"
-                        >
-                          {c.area_name}
-                        </button>
-                      ))}
-                    </div>
-                  </ChartCard>
-                </div>
-              )}
-            </>
-          )}
-        </>
-      )}
-
-      {/* ─── CITY VIEW ─── */}
-      {scope === "city" && (
-        <>
-          <div className="control-bar">
-            <select value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}
-              style={{ background: "var(--color-surface)", border: "1.5px solid var(--blue-light)", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 500, color: "var(--blue-dark)", fontFamily: "inherit" }}
-            >
-              <option value="">Select a city...</option>
-              {[
-                { id: "YBOS", name: "Boston" }, { id: "YORD", name: "Chicago" },
-                { id: "YCLE", name: "Cleveland" }, { id: "YDEN", name: "Denver" },
-                { id: "Y44HO", name: "Houston" }, { id: "Y05LA", name: "Los Angeles" },
-                { id: "YMIA", name: "Miami" }, { id: "Y35NY", name: "New York City" },
-                { id: "Y05SF", name: "San Francisco" }, { id: "Y48SE", name: "Seattle" },
-              ].map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-            </select>
-          </div>
-
-          {!selectedCity && <EmptyState message="Select a city to view prices" />}
-
-          {selectedCity && loading && <div className="text-center py-8" style={{ color: "var(--blue-mid)", fontSize: 13 }}>Loading...</div>}
-
-          {selectedCity && !loading && cityChart.length > 0 && (
-            <ChartCard
-              title={`${cityData[0]?.area_name || selectedCity} vs. National Average`}
-              subtitle="Weekly, dollars per gallon"
-              source="EIA Weekly Retail Gasoline and Diesel Prices"
-            >
-              <ComparisonChart data={cityChart} label={cityData[0]?.area_name || selectedCity} comparisonKey="city" />
-            </ChartCard>
-          )}
-
-          {selectedCity && !loading && cityChart.length === 0 && (
-            <EmptyState message={`No weekly price data for this city`} />
-          )}
-        </>
-      )}
+        </div>
+      </div>
     </div>
-  );
-}
-
-// ─── Shared Chart Components ───
-
-function TrendChart({ data, showForecast }: { data: { period: string; price: number | null; forecast: number | null }[]; showForecast: boolean }) {
-  return (
-    <ResponsiveContainer width="100%" height={340}>
-      <ComposedChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />
-        <XAxis dataKey="period" tick={{ fontSize: 11, fill: "#5a6a7a" }} tickLine={false} axisLine={{ stroke: "#ddd8ce" }}
-          interval={Math.max(Math.floor(data.length / 12) - 1, 0)}
-          tickFormatter={(v: string) => { const p = v.split("-"); return p.length >= 2 ? fmtMonth(`${p[0]}-${p[1]}`) : v; }}
-        />
-        <YAxis tick={{ fontSize: 11, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
-          tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={["auto", "auto"]}
-        />
-        <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
-          formatter={(value: unknown, name: unknown) => [value != null ? `$${Number(value).toFixed(3)}` : "\u2014", name === "price" ? "Actual" : "Forecast"]}
-          labelFormatter={(label: unknown) => String(label)}
-        />
-        <Line type="monotone" dataKey="price" stroke="#a03030" strokeWidth={2} dot={false} connectNulls={false} />
-        {showForecast && <Line type="monotone" dataKey="forecast" stroke="#a03030" strokeWidth={2} strokeDasharray="6 4" dot={false} connectNulls />}
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
-}
-
-function ComparisonChart({ data, label, comparisonKey }: { data: Record<string, unknown>[]; label: string; comparisonKey: string }) {
-  return (
-    <ResponsiveContainer width="100%" height={340}>
-      <ComposedChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />
-        <XAxis dataKey="period" tick={{ fontSize: 11, fill: "#5a6a7a" }} tickLine={false} axisLine={{ stroke: "#ddd8ce" }}
-          interval={Math.max(Math.floor(data.length / 10) - 1, 0)}
-          tickFormatter={(v: string) => { const p = v.split("-"); return fmtMonth(`${p[0]}-${p[1]}`); }}
-        />
-        <YAxis tick={{ fontSize: 11, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
-          tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={["auto", "auto"]}
-        />
-        <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
-          formatter={(value: unknown, name: unknown) => [`$${Number(value).toFixed(3)}`, name === comparisonKey ? label : "National Avg"]}
-          labelFormatter={(label: unknown) => String(label)}
-        />
-        <Line type="monotone" dataKey={comparisonKey} stroke="#a03030" strokeWidth={2} dot={false} connectNulls={false} />
-        <Line type="monotone" dataKey="national" stroke="#4a7aaa" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls={false} />
-      </ComposedChart>
-    </ResponsiveContainer>
   );
 }
