@@ -62,7 +62,8 @@ def fetch_paginated(url, params, description=""):
         data = resp.json()
 
         rows = data.get("response", {}).get("data", [])
-        total = data.get("response", {}).get("total", 0)
+        total_raw = data.get("response", {}).get("total", 0)
+        total = int(total_raw) if total_raw else 0
         print(f"got {len(rows)} rows (total: {total})")
 
         all_rows.extend(rows)
@@ -80,7 +81,7 @@ def backfill_gas_prices(conn):
     """Retail gasoline and diesel prices — weekly, by state + national."""
     print("\n=== Gas Prices (petroleum/pri/gnd) ===")
 
-    for product_id, product_name in [("EPM0F", "regular_gas"), ("EPD2D", "diesel")]:
+    for product_id, product_name in [("EPMR", "regular_gas"), ("EPD2DXL0", "diesel")]:
         rows = fetch_paginated(
             f"{BASE}/petroleum/pri/gnd/data",
             {
@@ -98,12 +99,16 @@ def backfill_gas_prices(conn):
             period = row.get("period", "")
             area_name = row.get("area-name", "")
             duoarea = row.get("duoarea", "")
-            value = row.get("value")
-            if value is None:
+            raw_value = row.get("value")
+            if raw_value is None or raw_value == "":
+                continue
+            try:
+                value = float(raw_value)
+            except (ValueError, TypeError):
                 continue
 
             # Determine area type from duoarea code
-            if duoarea.startswith("NUS"):
+            if duoarea == "NUS":
                 area_type, area_id = "national", "US"
             elif duoarea.startswith("S") and len(duoarea) == 3:
                 area_type, area_id = "state", duoarea[1:]
@@ -129,12 +134,12 @@ def backfill_steo(conn):
     print("\n=== STEO Forecasts ===")
 
     series_ids = [
-        "MGEIEUS",   # Regular gasoline retail price
-        "DFRCIUS",   # Diesel retail price
-        "BREPUUS",   # Brent crude spot
-        "WTIPUUS",   # WTI crude spot
-        "NGHHUUS",   # Henry Hub natural gas
-        "ESRCUUS",   # Residential electricity price
+        "MGRARUS_$",  # Regular gasoline retail price ($/gal)
+        "DSRTUUS_$",  # Diesel retail price ($/gal)
+        "BREPUUS",    # Brent crude spot
+        "WTIPUUS",    # WTI crude spot
+        "NGHHUUS",    # Henry Hub natural gas
+        "ESRCUUS",    # Residential electricity price
     ]
 
     for series_id in series_ids:
@@ -153,10 +158,14 @@ def backfill_steo(conn):
         inserted = 0
         for row in rows:
             period = row.get("period", "")
-            value = row.get("value")
+            raw_val = row.get("value")
             series_name = row.get("seriesName", "")
             unit = row.get("unit", "")
-            if value is None:
+            if raw_val is None or raw_val == "":
+                continue
+            try:
+                value = float(raw_val)
+            except (ValueError, TypeError):
                 continue
 
             conn.execute(
@@ -195,8 +204,12 @@ def backfill_grid_demand(conn):
             for row in rows:
                 period = row.get("period", "")
                 respondent_name = row.get("respondent-name", "")
-                value = row.get("value")
-                if value is None:
+                raw_val = row.get("value")
+                if raw_val is None or raw_val == "":
+                    continue
+                try:
+                    value = float(raw_val)
+                except (ValueError, TypeError):
                     continue
 
                 conn.execute(
@@ -234,8 +247,12 @@ def backfill_grid_fuel(conn):
             period = row.get("period", "")
             fuel_type = row.get("fueltype", "")
             fuel_name = row.get("type-name", "")
-            value = row.get("value")
-            if value is None:
+            raw_val = row.get("value")
+            if raw_val is None or raw_val == "":
+                continue
+            try:
+                value = float(raw_val)
+            except (ValueError, TypeError):
                 continue
 
             conn.execute(
@@ -272,8 +289,12 @@ def backfill_state_generation(conn):
         state_id = row.get("stateid", "")
         fuel_type = row.get("fueltypeid", "")
         fuel_name = row.get("fueltypeDescription", "")
-        generation = row.get("generation")
-        if generation is None or not state_id or state_id == "US":
+        raw_gen = row.get("generation")
+        if raw_gen is None or raw_gen == "" or not state_id or state_id == "US":
+            continue
+        try:
+            generation = float(raw_gen)
+        except (ValueError, TypeError):
             continue
 
         conn.execute(
@@ -308,9 +329,13 @@ def backfill_national_energy(conn):
         period = row.get("period", "")
         series_id = row.get("msn", "")
         series_name = row.get("seriesDescription", "")
-        value = row.get("value")
+        raw_val = row.get("value")
         unit = row.get("unit", "")
-        if value is None or not series_id:
+        if raw_val is None or raw_val == "" or not series_id:
+            continue
+        try:
+            value = float(raw_val)
+        except (ValueError, TypeError):
             continue
 
         conn.execute(
@@ -346,9 +371,13 @@ def backfill_state_energy(conn):
         state = row.get("stateId", "")
         series_id = row.get("seriesId", row.get("msn", ""))
         series_name = row.get("seriesDescription", row.get("seriesName", ""))
-        value = row.get("value")
+        raw_val = row.get("value")
         unit = row.get("unit", "")
-        if value is None or not state or state == "US":
+        if raw_val is None or raw_val == "" or not state or state == "US":
+            continue
+        try:
+            value = float(raw_val)
+        except (ValueError, TypeError):
             continue
 
         try:
