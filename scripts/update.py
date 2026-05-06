@@ -1,5 +1,5 @@
 """
-Daily incremental update — fetch latest data from EIA and upsert into DB.
+Daily incremental update — fetch latest data from EIA + AAA and upsert into DB.
 Intended to be called by GitHub Actions.
 """
 
@@ -20,6 +20,7 @@ from backfill import (
     DB_PATH,
     API_KEY,
 )
+from scrape_aaa import ensure_schema as ensure_aaa_schema, scrape_state_averages, scrape_county_data, STATES
 
 
 def main():
@@ -36,12 +37,29 @@ def main():
 
     print(f"=== Daily Update — {datetime.now().isoformat()} ===")
 
+    # ── EIA data ──
+    print("\n── EIA Data ──")
     backfill_gas_prices(conn)
     backfill_steo(conn)
     backfill_grid_demand(conn)
     backfill_grid_fuel(conn)
     backfill_state_generation(conn)
     backfill_national_energy(conn)
+
+    # ── AAA data ──
+    print("\n── AAA Data ──")
+    ensure_aaa_schema(conn)
+    try:
+        scrape_state_averages(conn)
+    except Exception as e:
+        print(f"  WARNING: AAA state averages failed: {e}")
+
+    print(f"\n  Scraping county data for {len(STATES)} states...")
+    for state_code in sorted(STATES.keys()):
+        try:
+            scrape_county_data(conn, state_code)
+        except Exception as e:
+            print(f"  WARNING: AAA county {state_code} failed: {e}")
 
     conn.close()
     print("\nDaily update complete!")

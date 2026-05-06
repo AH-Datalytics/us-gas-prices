@@ -1,4 +1,4 @@
-name: Daily EIA Data Update
+name: Daily Data Update
 
 on:
   schedule:
@@ -20,7 +20,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r scripts/requirements.txt
 
-      - name: Run daily update
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
+
+      - name: Run daily update (EIA + AAA)
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/update.py
@@ -42,4 +47,9 @@ jobs:
         working-directory: web
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx vercel --prod --yes --token $VERCEL_TOKEN
+        run: |
+          DEPLOY_URL=$(npx vercel --prod --yes --token $VERCEL_TOKEN --scope ahdatalytics 2>&1 | grep -o 'https://[^ ]*\.vercel\.app' | head -1)
+          echo "Deployed to: $DEPLOY_URL"
+          if [ -n "$DEPLOY_URL" ]; then
+            npx vercel alias $DEPLOY_URL us-gas-prices-ahd.vercel.app --token $VERCEL_TOKEN --scope ahdatalytics
+          fi

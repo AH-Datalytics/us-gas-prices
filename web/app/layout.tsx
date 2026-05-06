@@ -22,6 +22,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap"
           rel="stylesheet"
         />
+        <script dangerouslySetInnerHTML={{ __html: `if(location.search.indexOf('embed=1')!==-1)document.documentElement.classList.add('in-iframe')` }} />
+        <style dangerouslySetInnerHTML={{ __html: `.in-iframe .top-bar{display:none!important}` }} />
       </head>
       <body className="min-h-full flex flex-col">
         <TopBar />
