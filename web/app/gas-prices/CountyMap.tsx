@@ -23,13 +23,19 @@ const STATE_FIPS: Record<string, string> = {
   WV:"54",WI:"55",WY:"56",
 };
 
+interface CountyInfo {
+  county: string;
+  price: number;
+}
+
 interface CountyMapProps {
   aaaStates: AaaStateRow[];
   onStateClick?: (stateCode: string) => void;
   selectedState?: string;
+  countyData?: CountyInfo[];
 }
 
-export default function CountyMap({ aaaStates, onStateClick, selectedState }: CountyMapProps) {
+export default function CountyMap({ aaaStates, onStateClick, selectedState, countyData = [] }: CountyMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const countyGeoRef = useRef<GeoJSON.FeatureCollection | null>(null);
@@ -63,6 +69,8 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState }: Co
       minZoom: 2,
       maxZoom: 10,
       attributionControl: false,
+      // @ts-expect-error — preserveDrawingBuffer needed for JPEG export
+      preserveDrawingBuffer: true,
     });
 
     map.current = m;
@@ -259,11 +267,13 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState }: Co
       // Zoom back out
       m.fitBounds([[-130, 22], [-62, 52]], { padding: 20, duration: 800 });
       setLevel("state");
+      try { m.setPaintProperty("state-borders", "line-width", 1); } catch {}
       return;
     }
 
-    // Switch to county view
+    // Switch to county view + thicken state borders
     setLevel("county");
+    try { m.setPaintProperty("state-borders", "line-width", 2.5); } catch {}
 
     // Find state FIPS and zoom to its bounds
     const fips = STATE_FIPS[selectedState];
@@ -292,7 +302,11 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState }: Co
       }
     }
     if (minLng < maxLng && minLat < maxLat) {
-      m.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 30, duration: 800 });
+      // Offset padding: more on the right to account for the info panel (200px wide)
+      m.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
+        padding: { top: 30, bottom: 30, left: 30, right: 220 },
+        duration: 800,
+      });
     }
   }, [selectedState]);
 
@@ -324,7 +338,53 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState }: Co
           Loading map...
         </div>
       )}
-      <div ref={mapContainer} style={{ width: "100%", height: 300, borderRadius: 4 }} />
+      <div style={{ position: "relative" }}>
+        <div ref={mapContainer} style={{ width: "100%", height: 300, borderRadius: 4 }} />
+
+        {/* Floating info card — right side, scrollable county list */}
+        {selectedState && countyData.length > 0 && (() => {
+          const stateAaa = aaaStates.find((s) => s.state === selectedState);
+          const stateName = stateAaa?.state_name || selectedState;
+          // Use "parishes" for Louisiana, "boroughs" for Alaska
+          const countyLabel = selectedState === "LA" ? "parishes" : selectedState === "AK" ? "boroughs/areas" : "counties";
+          return (
+            <div style={{
+              position: "absolute", top: 6, right: 6, bottom: 6, zIndex: 20,
+              background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)",
+              border: "1px solid var(--border)", borderLeft: "3px solid var(--blue-main)",
+              borderRadius: 6, padding: "8px 10px", width: 200,
+              boxShadow: "0 2px 12px rgba(26,58,92,0.15)",
+              animation: "card-in 0.25s ease both",
+              display: "flex", flexDirection: "column", overflow: "hidden",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--blue-dark)", marginBottom: 1 }}>{stateName}</div>
+              {stateAaa && (
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--blue-main)", fontFamily: "var(--font-display)", marginBottom: 4 }}>
+                  {fmtDollars(stateAaa.regular)}
+                  <span style={{ fontSize: 9, fontWeight: 500, color: "var(--blue-mid)", marginLeft: 3 }}>/gal avg</span>
+                </div>
+              )}
+              <div style={{ fontSize: 8, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3 }}>
+                {countyData.length} {countyLabel}
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+                {countyData.map((c, i) => (
+                  <div key={c.county} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "1.5px 2px", fontSize: 9, borderBottom: i < countyData.length - 1 ? "1px solid rgba(212,228,240,0.5)" : "none",
+                  }}>
+                    <span style={{ color: "var(--blue-dark)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 4 }}>{c.county}</span>
+                    <span style={{
+                      fontWeight: 600, fontVariantNumeric: "tabular-nums", flexShrink: 0,
+                      color: i === 0 ? "#a03030" : i === countyData.length - 1 ? "#10b981" : "var(--color-chart-text)",
+                    }}>{fmtDollars(c.price)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
       {/* Legend */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
         <span>Lower</span>
