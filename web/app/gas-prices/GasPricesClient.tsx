@@ -52,8 +52,29 @@ function downloadCountyCsv(counties: { county: string; price: number }[], stateN
 
 async function downloadJpeg(el: HTMLElement | null, filename: string) {
   if (!el) return;
+  // Replace MapLibre canvas with a static image before capture
+  const mapCanvas = el.querySelector("canvas.maplibregl-canvas") as HTMLCanvasElement | null;
+  let img: HTMLImageElement | null = null;
+  if (mapCanvas) {
+    try {
+      img = document.createElement("img");
+      img.src = mapCanvas.toDataURL("image/png");
+      img.style.cssText = mapCanvas.style.cssText;
+      img.style.width = mapCanvas.style.width || `${mapCanvas.clientWidth}px`;
+      img.style.height = mapCanvas.style.height || `${mapCanvas.clientHeight}px`;
+      mapCanvas.style.display = "none";
+      mapCanvas.parentElement?.insertBefore(img, mapCanvas);
+    } catch {
+      img = null;
+    }
+  }
   const { toJpeg } = await import("html-to-image");
   const url = await toJpeg(el, { backgroundColor: "#F5F0E8", pixelRatio: 2, quality: 0.95 });
+  // Restore canvas
+  if (img && mapCanvas) {
+    img.remove();
+    mapCanvas.style.display = "";
+  }
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
 }
