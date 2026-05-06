@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -8,6 +8,7 @@ import {
 import ChartCard from "@/components/ChartCard";
 import ScopeToggle from "@/components/ScopeToggle";
 import EmptyState from "@/components/EmptyState";
+import CountyMap from "./CountyMap";
 import { US_STATES } from "@/lib/constants";
 import type { GasPriceRow, SteoRow, AaaStateRow } from "@/lib/queries";
 import { fmtDollars, fmtMonth } from "@/lib/utils";
@@ -18,98 +19,6 @@ interface Props {
   steoGas: SteoRow[];
   steoDiesel: SteoRow[];
   aaaStates: AaaStateRow[];
-}
-
-// ─── Choropleth Map (inline SVG approach for simplicity) ───
-
-function StateChoropleth({ states, onSelect }: { states: AaaStateRow[]; onSelect: (code: string) => void }) {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [geojson, setGeojson] = useState<GeoJSON.FeatureCollection | null>(null);
-  const [tooltip, setTooltip] = useState<{ name: string; price: string; x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    fetch("/us-states.json")
-      .then((r) => r.json())
-      .then(setGeojson)
-      .catch(() => {});
-  }, []);
-
-  if (!geojson || states.length === 0) return null;
-
-  // Build price lookup by state name
-  const priceMap = new Map<string, number>();
-  for (const s of states) {
-    priceMap.set(s.state_name, s.regular ?? 0);
-  }
-
-  // Color scale
-  const prices = states.filter((s) => s.regular != null).map((s) => s.regular!);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
-
-  function getColor(price: number | undefined): string {
-    if (price == null) return "#e2e8f0";
-    const t = maxP > minP ? (price - minP) / (maxP - minP) : 0.5;
-    // Blue (low) to red (high)
-    const r = Math.round(45 + t * (160 - 45));
-    const g = Math.round(95 + (1 - t) * (138 - 95) - t * 47);
-    const b = Math.round(138 - t * 90);
-    return `rgb(${r},${g},${b})`;
-  }
-
-  return (
-    <div ref={mapRef} style={{ position: "relative" }}>
-      {/* Legend */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 10, color: "var(--blue-mid)" }}>
-        <span>{fmtDollars(minP)}</span>
-        <div style={{
-          width: 120, height: 8, borderRadius: 4,
-          background: `linear-gradient(to right, ${getColor(minP)}, ${getColor((minP + maxP) / 2)}, ${getColor(maxP)})`,
-        }} />
-        <span>{fmtDollars(maxP)}</span>
-      </div>
-
-      {/* State table as a visual grid (since inline SVG map is complex) */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 3,
-      }}>
-        {states.map((s) => {
-          const stateInfo = US_STATES.find((us) => us.code === s.state);
-          return (
-            <button
-              key={s.state}
-              onClick={() => onSelect(s.state)}
-              style={{
-                background: getColor(s.regular ?? undefined),
-                border: "1px solid rgba(255,255,255,0.3)",
-                borderRadius: 4,
-                padding: "6px 4px",
-                cursor: "pointer",
-                textAlign: "center",
-                transition: "transform 0.1s, box-shadow 0.1s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "scale(1.05)";
-                e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.2)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "scale(1)";
-                e.currentTarget.style.boxShadow = "none";
-              }}
-              title={`${s.state_name}: ${fmtDollars(s.regular)}`}
-            >
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}>
-                {s.state}
-              </div>
-              <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.9)", textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}>
-                {fmtDollars(s.regular)}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 
 // ─── Main Component ───
@@ -257,14 +166,12 @@ export default function GasPricesClient({
             </div>
           </div>
 
-          {/* Choropleth */}
-          {aaaStates.length > 0 && (
-            <div className="mb-6">
-              <ChartCard title="Regular Gasoline by State" subtitle="Today's average price per gallon (AAA)" source="AAA Fuel Prices">
-                <StateChoropleth states={sortedStates} onSelect={handleStateSelect} />
-              </ChartCard>
-            </div>
-          )}
+          {/* County Choropleth Map */}
+          <div className="mb-6">
+            <ChartCard title="Gas Prices by County" subtitle="Today's average regular gasoline price per gallon — click a county to view state details" source="AAA Fuel Prices (130,000+ stations)">
+              <CountyMap onStateClick={handleStateSelect} />
+            </ChartCard>
+          </div>
 
           {/* National trend */}
           <ChartCard
