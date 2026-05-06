@@ -166,3 +166,40 @@ export function getSteoForecast(seriesId: string): SteoRow[] {
      ORDER BY period`
   ).all(seriesId) as SteoRow[];
 }
+
+// ─── AAA Gas Prices ──────────────────────
+
+export interface AaaStateRow {
+  date: string;
+  state: string;
+  state_name: string;
+  regular: number | null;
+  midgrade: number | null;
+  premium: number | null;
+  diesel: number | null;
+}
+
+export function getAaaStatePrices(): AaaStateRow[] {
+  return cachedPrepare(
+    `SELECT date, state, state_name, regular, midgrade, premium, diesel
+     FROM aaa_state_prices
+     WHERE date = (SELECT MAX(date) FROM aaa_state_prices)
+     ORDER BY regular DESC`
+  ).all() as AaaStateRow[];
+}
+
+export interface AaaCountyRow {
+  date: string;
+  state: string;
+  county: string;
+  price: number;
+}
+
+export function getAaaCountyPrices(state: string): AaaCountyRow[] {
+  return cachedPrepare(
+    `SELECT date, state, county, price
+     FROM aaa_county_prices
+     WHERE state = ? AND date = (SELECT MAX(date) FROM aaa_county_prices WHERE state = ?)
+     ORDER BY price DESC`
+  ).all(state, state) as AaaCountyRow[];
+}
