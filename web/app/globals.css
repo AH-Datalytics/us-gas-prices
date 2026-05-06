@@ -67,7 +67,7 @@ body {
   border: 1.5px solid var(--blue-light);
 }
 .scope-btn {
-  padding: 7px 16px; font-size: 12px; font-weight: 600;
+  padding: 4px 10px; font-size: 10px; font-weight: 600;
   background: var(--color-surface); color: var(--blue-mid);
   border: none; cursor: pointer; transition: all 0.15s;
   font-family: inherit;
@@ -157,7 +157,7 @@ body {
 
 /* ── PRESET BUTTONS ─────────────────────── */
 .preset-btn {
-  padding: 5px 12px; font-size: 11px; font-weight: 600;
+  padding: 3px 8px; font-size: 10px; font-weight: 600;
   background: var(--color-surface); color: var(--blue-mid);
   border: 1.5px solid var(--blue-light); border-radius: 6px;
   cursor: pointer; transition: all 0.15s; font-family: inherit;
@@ -167,8 +167,8 @@ body {
 
 /* ── FORECAST TOGGLE ────────────────────── */
 .forecast-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 12px; font-size: 11px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font-size: 10px; font-weight: 600;
   background: var(--blue-pale); color: var(--blue-main);
   border: 1.5px solid var(--blue-light); border-radius: 6px;
   cursor: pointer; transition: all 0.15s; font-family: inherit;

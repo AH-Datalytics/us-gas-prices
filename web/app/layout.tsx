@@ -3,11 +3,11 @@ import TopBar from "@/components/TopBar";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "US Energy Explorer \u2014 AH Datalytics",
-  description: "Explore U.S. electricity grid operations, national energy trends, and gas prices with data from the EIA.",
+  title: "US Gas Prices \u2014 AH Datalytics",
+  description: "County-level gas prices across all 50 states, weekly national trends since 1990, and 18-month EIA forecasts.",
   openGraph: {
-    title: "US Energy Explorer \u2014 AH Datalytics",
-    description: "Explore U.S. electricity grid operations, national energy trends, and gas prices with data from the EIA.",
+    title: "US Gas Prices \u2014 AH Datalytics",
+    description: "County-level gas prices across all 50 states, weekly national trends since 1990, and 18-month EIA forecasts.",
     type: "website",
   },
 };

@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import dynamic from "next/dynamic";
 import {
-  ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
 } from "recharts";
 import ScopeToggle from "@/components/ScopeToggle";
 import { US_STATES } from "@/lib/constants";
@@ -48,13 +48,12 @@ async function downloadJpeg(el: HTMLElement | null, filename: string) {
   a.href = url; a.download = filename; a.click();
 }
 
-/** Format YYYY-MM-DD or YYYY-MM to short label */
-function fmtAxisLabel(v: string): string {
+function fmtAxisLabel(v: string, yearOnly: boolean): string {
   const p = v.split("-");
   if (p.length < 2) return v;
+  if (yearOnly) return p[0];
   const names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const mon = names[parseInt(p[1]) - 1] || p[1];
-  return `${mon} ${p[0]}`;
+  return `${names[parseInt(p[1]) - 1] || p[1]} ${p[0]}`;
 }
 
 export default function GasPricesClient({
@@ -63,8 +62,6 @@ export default function GasPricesClient({
   const [fuel, setFuel] = useState<"regular_gas" | "diesel">("regular_gas");
   const [showForecast, setShowForecast] = useState(false);
   const [selectedState, setSelectedState] = useState("");
-
-  // Date range — default last 2 years
   const now = new Date();
   const defaultStart = `${now.getFullYear() - 2}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const [startDate, setStartDate] = useState(defaultStart);
@@ -76,32 +73,41 @@ export default function GasPricesClient({
   const allPriceData = fuel === "regular_gas" ? nationalRegular : nationalDiesel;
   const steoData = fuel === "regular_gas" ? steoGas : steoDiesel;
 
-  // Filter by date range
   const priceData = allPriceData.filter((r) => {
     if (startDate && r.period < startDate) return false;
     if (endDate && r.period > endDate) return false;
     return true;
   });
 
-  // Build chart data
-  const chartData: { period: string; price: number | null; forecast: number | null }[] = priceData.map((r) => ({
+  // Build chart data with forecast shading region
+  const chartData: { period: string; price: number | null; forecast: number | null; isForecast?: boolean }[] = priceData.map((r) => ({
     period: r.period, price: r.price, forecast: null,
   }));
+  let forecastStart = "";
   if (showForecast && steoData.length > 0) {
     const lastActual = priceData[priceData.length - 1]?.period || "";
+    forecastStart = lastActual;
     const bridgeIdx = chartData.findIndex((d) => d.period === lastActual);
     if (bridgeIdx >= 0) chartData[bridgeIdx].forecast = chartData[bridgeIdx].price;
     for (const row of steoData) {
       if (row.period > lastActual) {
-        chartData.push({ period: row.period, price: null, forecast: row.value });
+        chartData.push({ period: row.period, price: null, forecast: row.value, isForecast: true });
       }
     }
   }
 
   const latestNational = allPriceData[allPriceData.length - 1];
+  const prevWeek = allPriceData.length >= 2 ? allPriceData[allPriceData.length - 2] : null;
+  const weekChange = latestNational && prevWeek ? latestNational.price - prevWeek.price : null;
   const sortedStates = [...aaaStates].sort((a, b) => (b.regular ?? 0) - (a.regular ?? 0));
   const selectedAaa = aaaStates.find((s) => s.state === selectedState);
   const selectedStateName = US_STATES.find((s) => s.code === selectedState)?.name || "";
+  const lowestState = sortedStates[sortedStates.length - 1];
+
+  // Stat: how far above/below national
+  const natAvg = latestNational?.price ?? 0;
+  const highDiff = sortedStates[0] ? sortedStates[0].regular! - natAvg : 0;
+  const lowDiff = lowestState ? lowestState.regular! - natAvg : 0;
 
   const exportBtnClass = "text-[10px] text-[var(--blue-mid)] hover:text-[var(--blue-main)] underline decoration-dotted underline-offset-2 cursor-pointer transition-colors";
 
@@ -114,20 +120,23 @@ export default function GasPricesClient({
           <div className="flex items-center justify-between mb-1">
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 16 }}>US Gas Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 2, fontSize: 11 }}>Click a state for details</div>
+              <div className="subtitle" style={{ marginBottom: 2, fontSize: 11 }}>Click a state for county breakdown</div>
             </div>
             <div className="flex items-center gap-3">
               <button className={exportBtnClass} onClick={() => downloadMapCsv(sortedStates, "gas-prices-by-state.csv")}>CSV</button>
               <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, "gas-prices-map.jpg")}>JPEG</button>
             </div>
           </div>
-          <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} />
-          <div className="source" style={{ marginTop: 4 }}>Source: AAA Fuel Prices (130,000+ stations)</div>
+          <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} selectedState={selectedState} />
+          {/* AHD logo watermark */}
+          <div className="flex items-center justify-between" style={{ marginTop: 4 }}>
+            <div className="source">Source: AAA Fuel Prices (130,000+ stations)</div>
+            <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 18, opacity: 0.4 }} />
+          </div>
         </div>
 
         {/* Chart */}
         <div className="chart-card" ref={chartRef} style={{ padding: "16px 20px 12px", display: "flex", flexDirection: "column" }}>
-          {/* Header row */}
           <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 16 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
@@ -160,6 +169,7 @@ export default function GasPricesClient({
               { label: "3M", months: 3 },
               { label: "6M", months: 6 },
               { label: "1Y", months: 12 },
+              { label: "2Y", months: 24 },
               { label: "5Y", months: 60 },
               { label: "10Y", months: 120 },
               { label: "All", months: 0 },
@@ -179,24 +189,50 @@ export default function GasPricesClient({
             })}
           </div>
 
-          {/* Chart — flex fill */}
-          <div style={{ flex: 1, minHeight: 280 }}>
+          {/* Chart */}
+          <div style={{ flex: 1, minHeight: 240 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />
+                {/* Forecast shaded region */}
+                {showForecast && forecastStart && chartData.length > 0 && (
+                  <ReferenceArea
+                    x1={forecastStart}
+                    x2={chartData[chartData.length - 1].period}
+                    fill="#f5f0e8"
+                    fillOpacity={0.5}
+                    stroke="none"
+                  />
+                )}
                 <XAxis dataKey="period"
                   tick={{ fontSize: 10, fill: "#5a6a7a" }}
                   tickLine={false}
                   axisLine={{ stroke: "#ddd8ce" }}
                   ticks={(() => {
-                    // Pick evenly spaced month ticks based on data range
                     if (chartData.length === 0) return [];
-                    const totalMonths = chartData.length / 4.3; // ~4.3 weeks per month
+                    const totalMonths = chartData.length / 4.3;
+                    const useYears = totalMonths > 48; // 4+ years → year ticks
+                    if (useYears) {
+                      // Pick January of each year (or every N years)
+                      const seen = new Set<string>();
+                      const ticks: string[] = [];
+                      const totalYears = totalMonths / 12;
+                      const yearStep = Math.max(1, Math.round(totalYears / 8));
+                      for (const d of chartData) {
+                        const yr = d.period.slice(0, 4);
+                        const mo = d.period.slice(5, 7);
+                        if (mo === "01" && !seen.has(yr)) {
+                          seen.add(yr);
+                          if (seen.size % yearStep === 1 || yearStep === 1) ticks.push(d.period);
+                        }
+                      }
+                      return ticks;
+                    }
                     const step = Math.max(1, Math.round(totalMonths / 8));
                     const seen = new Set<string>();
                     const ticks: string[] = [];
                     for (const d of chartData) {
-                      const ym = d.period.slice(0, 7); // YYYY-MM
+                      const ym = d.period.slice(0, 7);
                       if (!seen.has(ym)) {
                         seen.add(ym);
                         if (seen.size % step === 1 || step === 1) ticks.push(d.period);
@@ -204,7 +240,7 @@ export default function GasPricesClient({
                     }
                     return ticks;
                   })()}
-                  tickFormatter={fmtAxisLabel}
+                  tickFormatter={(v: string) => fmtAxisLabel(v, chartData.length / 4.3 > 48)}
                   angle={-30}
                   textAnchor="end"
                   height={40}
@@ -221,7 +257,11 @@ export default function GasPricesClient({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="source">Source: EIA Weekly Retail Gasoline and Diesel Prices + STEO</div>
+          {/* Footer with source + logo */}
+          <div className="flex items-center justify-between">
+            <div className="source">Source: EIA Weekly Retail Gasoline and Diesel Prices.{showForecast ? " Forecast: EIA Short-Term Energy Outlook (STEO), updated monthly." : ""}</div>
+            <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 18, opacity: 0.4 }} />
+          </div>
         </div>
       </div>
 
@@ -229,21 +269,32 @@ export default function GasPricesClient({
       <div className="grid grid-cols-3 gap-3">
         <div className="stat-box">
           <div className="stat-label">National Average</div>
-          <div className="stat-value">{latestNational ? fmtDollars(latestNational.price) : "\u2014"}</div>
-          <div className="stat-sub">per gallon &middot; {latestNational?.period || ""}</div>
+          <div className="stat-value">
+            {latestNational ? fmtDollars(latestNational.price) : "\u2014"}
+            {weekChange != null && (
+              <span style={{ fontSize: 12, fontWeight: 600, marginLeft: 6, color: weekChange >= 0 ? "#a03030" : "#10b981" }}>
+                {weekChange >= 0 ? "\u25B2" : "\u25BC"} {fmtDollars(Math.abs(weekChange))}
+              </span>
+            )}
+          </div>
+          <div className="stat-sub">per gallon &middot; week of {latestNational?.period || ""}</div>
         </div>
         <div className="stat-box">
           <div className="stat-label">Highest State</div>
-          <div className="stat-value">{sortedStates[0] ? fmtDollars(sortedStates[0].regular) : "\u2014"}</div>
+          <div className="stat-value">
+            {sortedStates[0] ? fmtDollars(sortedStates[0].regular) : "\u2014"}
+            {highDiff > 0 && <span style={{ fontSize: 11, color: "#a03030", marginLeft: 6 }}>+{fmtDollars(highDiff)} vs nat'l</span>}
+          </div>
           <div className="stat-sub">{sortedStates[0]?.state_name || ""}</div>
         </div>
         <div className="stat-box">
           <div className="stat-label">{selectedStateName || "Lowest State"}</div>
           <div className="stat-value">
-            {selectedAaa ? fmtDollars(selectedAaa.regular) : sortedStates.length > 0 ? fmtDollars(sortedStates[sortedStates.length - 1].regular) : "\u2014"}
+            {selectedAaa ? fmtDollars(selectedAaa.regular) : lowestState ? fmtDollars(lowestState.regular) : "\u2014"}
+            {!selectedAaa && lowDiff < 0 && <span style={{ fontSize: 11, color: "#10b981", marginLeft: 6 }}>{fmtDollars(lowDiff)} vs nat'l</span>}
           </div>
           <div className="stat-sub">
-            {selectedAaa ? "click map to change" : sortedStates[sortedStates.length - 1]?.state_name || ""}
+            {selectedAaa ? "click map to change" : lowestState?.state_name || ""}
           </div>
         </div>
       </div>

@@ -26,11 +26,13 @@ const STATE_FIPS: Record<string, string> = {
 interface CountyMapProps {
   aaaStates: AaaStateRow[];
   onStateClick?: (stateCode: string) => void;
+  selectedState?: string;
 }
 
-export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
+export default function CountyMap({ aaaStates, onStateClick, selectedState }: CountyMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
+  const countyGeoRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const [loading, setLoading] = useState(true);
   const [level, setLevel] = useState<"state" | "county">("state");
   const levelRef = useRef(level);
@@ -144,6 +146,7 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
       const cp70 = countyPrices[Math.floor(countyPrices.length * 0.7)] || 0;
       const cp90 = countyPrices[Math.floor(countyPrices.length * 0.9)] || 0;
 
+      countyGeoRef.current = geojson;
       m.addSource("counties", { type: "geojson", data: geojson });
 
       // County fill
@@ -247,10 +250,65 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
     }
   }, [level]);
 
+  // Zoom to selected state + switch to county view
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+
+    if (!selectedState) {
+      // Zoom back out
+      m.fitBounds([[-130, 22], [-62, 52]], { padding: 20, duration: 800 });
+      setLevel("state");
+      return;
+    }
+
+    // Switch to county view
+    setLevel("county");
+
+    // Find state FIPS and zoom to its bounds
+    const fips = STATE_FIPS[selectedState];
+    if (!fips || !countyGeoRef.current) return;
+
+    const stateFeatures = countyGeoRef.current.features.filter(
+      (f) => f.properties?.STATE === fips
+    );
+    if (stateFeatures.length === 0) return;
+
+    let minLng = 180, maxLng = -180, minLat = 90, maxLat = -90;
+    for (const feat of stateFeatures) {
+      const geom = feat.geometry;
+      const rings = geom.type === "Polygon"
+        ? geom.coordinates
+        : geom.type === "MultiPolygon"
+        ? geom.coordinates.flat()
+        : [];
+      for (const ring of rings) {
+        for (const coord of ring as [number, number][]) {
+          if (coord[0] < minLng) minLng = coord[0];
+          if (coord[0] > maxLng) maxLng = coord[0];
+          if (coord[1] < minLat) minLat = coord[1];
+          if (coord[1] > maxLat) maxLat = coord[1];
+        }
+      }
+    }
+    if (minLng < maxLng && minLat < maxLat) {
+      m.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 30, duration: 800 });
+    }
+  }, [selectedState]);
+
   return (
     <div style={{ position: "relative" }}>
-      {/* Level toggle */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+      {/* Controls row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        {selectedState ? (
+          <button
+            onClick={() => onStateClickRef.current?.("")}
+            style={{ fontSize: 11, fontWeight: 600, color: "var(--blue-main)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Back to US
+          </button>
+        ) : <div />}
         <div className="scope-toggle">
           <button className={`scope-btn ${level === "state" ? "active" : ""}`} onClick={() => setLevel("state")}>
             State
@@ -266,7 +324,7 @@ export default function CountyMap({ aaaStates, onStateClick }: CountyMapProps) {
           Loading map...
         </div>
       )}
-      <div ref={mapContainer} style={{ width: "100%", height: 340, borderRadius: 4 }} />
+      <div ref={mapContainer} style={{ width: "100%", height: 300, borderRadius: 4 }} />
       {/* Legend */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
         <span>Lower</span>
