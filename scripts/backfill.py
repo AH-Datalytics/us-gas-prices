@@ -286,11 +286,14 @@ def backfill_state_generation(conn):
     inserted = 0
     for row in rows:
         period = row.get("period", "")
-        state_id = row.get("stateid", "")
+        state_id = row.get("location", row.get("stateid", ""))
         fuel_type = row.get("fueltypeid", "")
-        fuel_name = row.get("fueltypeDescription", "")
+        fuel_name = row.get("fuelTypeDescription", row.get("fueltypeDescription", ""))
         raw_gen = row.get("generation")
-        if raw_gen is None or raw_gen == "" or not state_id or state_id == "US":
+        if raw_gen is None or raw_gen == "" or not state_id:
+            continue
+        # Skip non-state entries (US total, census regions have 2+ char codes that aren't states)
+        if state_id == "US" or len(state_id) > 2:
             continue
         try:
             generation = float(raw_gen)
