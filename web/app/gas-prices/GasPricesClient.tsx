@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
 import {
-  ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
+  ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
 } from "recharts";
 import ScopeToggle from "@/components/ScopeToggle";
 import { US_STATES } from "@/lib/constants";
 
-const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 340, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
+const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 300, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
 import type { GasPriceRow, SteoRow, AaaStateRow } from "@/lib/queries";
 import { fmtDollars } from "@/lib/utils";
 
@@ -30,9 +30,19 @@ function downloadCsv(data: { period: string; price: number | null; forecast: num
   URL.revokeObjectURL(url);
 }
 
-function downloadMapCsv(states: AaaStateRow[], filename: string) {
+function downloadStateCsv(states: AaaStateRow[], filename: string) {
   const header = "State,Code,Regular,Midgrade,Premium,Diesel,Date";
   const rows = states.map((s) => `${s.state_name},${s.state},${s.regular ?? ""},${s.midgrade ?? ""},${s.premium ?? ""},${s.diesel ?? ""},${s.date}`);
+  const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadCountyCsv(counties: { county: string; price: number }[], stateName: string, filename: string) {
+  const header = "County,State,Regular_Price";
+  const rows = counties.map((c) => `${c.county},${stateName},${c.price}`);
   const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -62,6 +72,9 @@ export default function GasPricesClient({
   const [fuel, setFuel] = useState<"regular_gas" | "diesel">("regular_gas");
   const [showForecast, setShowForecast] = useState(false);
   const [selectedState, setSelectedState] = useState("");
+  const [countyData, setCountyData] = useState<{ county: string; price: number }[]>([]);
+  const [countyLoading, setCountyLoading] = useState(false);
+
   const now = new Date();
   const defaultStart = `${now.getFullYear() - 2}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const [startDate, setStartDate] = useState(defaultStart);
@@ -69,6 +82,16 @@ export default function GasPricesClient({
 
   const mapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<HTMLDivElement>(null);
+
+  // Fetch county data when state selected
+  useEffect(() => {
+    if (!selectedState) { setCountyData([]); return; }
+    setCountyLoading(true);
+    fetch(`/api/gas-state?state=${selectedState}&fuel=${fuel}`)
+      .then((r) => r.json())
+      .then((d) => setCountyData(d.counties || []))
+      .finally(() => setCountyLoading(false));
+  }, [selectedState, fuel]);
 
   const allPriceData = fuel === "regular_gas" ? nationalRegular : nationalDiesel;
   const steoData = fuel === "regular_gas" ? steoGas : steoDiesel;
@@ -79,8 +102,7 @@ export default function GasPricesClient({
     return true;
   });
 
-  // Build chart data with forecast shading region
-  const chartData: { period: string; price: number | null; forecast: number | null; isForecast?: boolean }[] = priceData.map((r) => ({
+  const chartData: { period: string; price: number | null; forecast: number | null }[] = priceData.map((r) => ({
     period: r.period, price: r.price, forecast: null,
   }));
   let forecastStart = "";
@@ -91,7 +113,7 @@ export default function GasPricesClient({
     if (bridgeIdx >= 0) chartData[bridgeIdx].forecast = chartData[bridgeIdx].price;
     for (const row of steoData) {
       if (row.period > lastActual) {
-        chartData.push({ period: row.period, price: null, forecast: row.value, isForecast: true });
+        chartData.push({ period: row.period, price: null, forecast: row.value });
       }
     }
   }
@@ -103,44 +125,113 @@ export default function GasPricesClient({
   const selectedAaa = aaaStates.find((s) => s.state === selectedState);
   const selectedStateName = US_STATES.find((s) => s.code === selectedState)?.name || "";
   const lowestState = sortedStates[sortedStates.length - 1];
-
-  // Stat: how far above/below national
   const natAvg = latestNational?.price ?? 0;
   const highDiff = sortedStates[0] ? sortedStates[0].regular! - natAvg : 0;
   const lowDiff = lowestState ? lowestState.regular! - natAvg : 0;
+
+  // County stats
+  const countyAvg = countyData.length > 0 ? countyData.reduce((s, c) => s + c.price, 0) / countyData.length : 0;
+  const countyHigh = countyData.length > 0 ? countyData[0] : null; // already sorted desc from API
+  const countyLow = countyData.length > 0 ? countyData[countyData.length - 1] : null;
 
   const exportBtnClass = "text-[10px] text-[var(--blue-mid)] hover:text-[var(--blue-main)] underline decoration-dotted underline-offset-2 cursor-pointer transition-colors";
 
   return (
     <div style={{ maxWidth: 1400 }} className="mx-auto px-6 py-4">
-      {/* Map + Chart side by side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+      {/* Main row: Map (+ optional sidebar) + Chart */}
+      <div style={{ display: "grid", gridTemplateColumns: selectedState ? "1fr 240px 1fr" : "1fr 1fr", gap: 12, marginBottom: 12, transition: "grid-template-columns 0.3s" }}>
         {/* Map */}
-        <div className="chart-card" ref={mapRef} style={{ padding: "16px 20px 12px" }}>
+        <div className="chart-card" ref={mapRef} style={{ padding: "14px 16px 10px" }}>
           <div className="flex items-center justify-between mb-1">
             <div>
-              <h2 style={{ marginBottom: 0, fontSize: 16 }}>US Gas Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 2, fontSize: 11 }}>Click a state for county breakdown</div>
+              <h2 style={{ marginBottom: 0, fontSize: 15 }}>{selectedState ? `${selectedStateName} Counties` : "US Gas Prices"}</h2>
+              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>{selectedState ? "County-level regular gasoline" : "Click a state for county breakdown"}</div>
             </div>
             <div className="flex items-center gap-3">
-              <button className={exportBtnClass} onClick={() => downloadMapCsv(sortedStates, "gas-prices-by-state.csv")}>CSV</button>
-              <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, "gas-prices-map.jpg")}>JPEG</button>
+              <button className={exportBtnClass} onClick={() => {
+                if (selectedState && countyData.length > 0) {
+                  downloadCountyCsv(countyData, selectedStateName, `gas-prices-${selectedState}-counties.csv`);
+                } else {
+                  downloadStateCsv(sortedStates, "gas-prices-by-state.csv");
+                }
+              }}>CSV</button>
+              <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, selectedState ? `gas-prices-${selectedState}.jpg` : "gas-prices-map.jpg")}>JPEG</button>
             </div>
           </div>
           <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} selectedState={selectedState} />
-          {/* AHD logo watermark */}
           <div className="flex items-center justify-between" style={{ marginTop: 4 }}>
-            <div className="source">Source: AAA Fuel Prices (130,000+ stations)</div>
-            <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 18, opacity: 0.4 }} />
+            <div className="source">Source: AAA Fuel Prices</div>
+            <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
           </div>
         </div>
 
+        {/* Sidebar — county info panel (only when state selected) */}
+        {selectedState && (
+          <div style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--border)",
+            borderLeft: "3px solid var(--blue-main)",
+            borderRadius: 8,
+            padding: "12px 10px",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            animation: "card-in 0.3s ease both",
+          }}>
+            {/* Header */}
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--blue-main)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 4 }}>
+                {selectedStateName}
+              </div>
+              {selectedAaa && (
+                <div style={{ fontSize: 20, fontWeight: 800, color: "var(--blue-dark)", fontFamily: "var(--font-display)" }}>
+                  {fmtDollars(selectedAaa.regular)}
+                  <span style={{ fontSize: 10, fontWeight: 500, color: "var(--blue-mid)", marginLeft: 4 }}>/gal avg</span>
+                </div>
+              )}
+            </div>
+
+            {/* Mini stats */}
+            {countyData.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 8 }}>
+                <div style={{ background: "var(--blue-pale)", borderRadius: 4, padding: "4px 6px" }}>
+                  <div style={{ fontSize: 8, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Highest</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#a03030" }}>{fmtDollars(countyHigh?.price)}</div>
+                  <div style={{ fontSize: 9, color: "var(--blue-mid)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{countyHigh?.county}</div>
+                </div>
+                <div style={{ background: "var(--blue-pale)", borderRadius: 4, padding: "4px 6px" }}>
+                  <div style={{ fontSize: 8, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Lowest</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#10b981" }}>{fmtDollars(countyLow?.price)}</div>
+                  <div style={{ fontSize: 9, color: "var(--blue-mid)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{countyLow?.county}</div>
+                </div>
+              </div>
+            )}
+
+            {/* County list */}
+            <div style={{ fontSize: 9, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>
+              {countyData.length} Counties
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+              {countyLoading && <div style={{ fontSize: 11, color: "var(--blue-mid)", padding: 8 }}>Loading...</div>}
+              {!countyLoading && countyData.map((c) => (
+                <div key={c.county} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "2px 4px", fontSize: 10, borderBottom: "1px solid var(--border)",
+                }}>
+                  <span style={{ color: "var(--blue-dark)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 4 }}>{c.county}</span>
+                  <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "var(--color-chart-text)", flexShrink: 0 }}>{fmtDollars(c.price)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Chart */}
-        <div className="chart-card" ref={chartRef} style={{ padding: "16px 20px 12px", display: "flex", flexDirection: "column" }}>
+        <div className="chart-card" ref={chartRef} style={{ padding: "14px 16px 10px", display: "flex", flexDirection: "column" }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
             <div>
-              <h2 style={{ marginBottom: 0, fontSize: 16 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 0, fontSize: 11 }}>Weekly, $/gallon</div>
+              <h2 style={{ marginBottom: 0, fontSize: 15 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
+              <div className="subtitle" style={{ marginBottom: 0, fontSize: 10 }}>Weekly, $/gallon</div>
             </div>
             <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
               <button className={exportBtnClass} onClick={() => downloadCsv(chartData, `gas-prices-${fuel}.csv`)}>CSV</button>
@@ -154,16 +245,12 @@ export default function GasPricesClient({
                 active={fuel}
                 onChange={(v) => setFuel(v as "regular_gas" | "diesel")}
               />
-              <button
-                className={`forecast-btn ${showForecast ? "active" : ""}`}
-                onClick={() => setShowForecast(!showForecast)}
-              >
+              <button className={`forecast-btn ${showForecast ? "active" : ""}`} onClick={() => setShowForecast(!showForecast)}>
                 Forecast
               </button>
             </div>
           </div>
 
-          {/* Date range presets */}
           <div className="flex items-center gap-1.5" style={{ marginBottom: 6 }}>
             {[
               { label: "3M", months: 3 },
@@ -189,31 +276,22 @@ export default function GasPricesClient({
             })}
           </div>
 
-          {/* Chart */}
-          <div style={{ flex: 1, minHeight: 240 }}>
+          <div style={{ flex: 1, minHeight: 220 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />
-                {/* Forecast shaded region */}
                 {showForecast && forecastStart && chartData.length > 0 && (
-                  <ReferenceArea
-                    x1={forecastStart}
-                    x2={chartData[chartData.length - 1].period}
-                    fill="#f5f0e8"
-                    fillOpacity={0.5}
-                    stroke="none"
-                  />
+                  <ReferenceArea x1={forecastStart} x2={chartData[chartData.length - 1].period} fill="#f5f0e8" fillOpacity={0.5} stroke="none" />
                 )}
                 <XAxis dataKey="period"
-                  tick={{ fontSize: 10, fill: "#5a6a7a" }}
+                  tick={{ fontSize: 9, fill: "#5a6a7a" }}
                   tickLine={false}
                   axisLine={{ stroke: "#ddd8ce" }}
                   ticks={(() => {
                     if (chartData.length === 0) return [];
                     const totalMonths = chartData.length / 4.3;
-                    const useYears = totalMonths > 48; // 4+ years → year ticks
+                    const useYears = totalMonths > 48;
                     if (useYears) {
-                      // Pick January of each year (or every N years)
                       const seen = new Set<string>();
                       const ticks: string[] = [];
                       const totalYears = totalMonths / 12;
@@ -243,12 +321,12 @@ export default function GasPricesClient({
                   tickFormatter={(v: string) => fmtAxisLabel(v, chartData.length / 4.3 > 48)}
                   angle={-30}
                   textAnchor="end"
-                  height={40}
+                  height={36}
                 />
                 <YAxis tick={{ fontSize: 10, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
                   tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={["auto", "auto"]}
                 />
-                <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
+                <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 11, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
                   formatter={(value: unknown, name: unknown) => [value != null ? `$${Number(value).toFixed(3)}` : "\u2014", name === "price" ? "Actual" : "Forecast"]}
                   labelFormatter={(label: unknown) => String(label)}
                 />
@@ -257,10 +335,9 @@ export default function GasPricesClient({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          {/* Footer with source + logo */}
           <div className="flex items-center justify-between">
             <div className="source">Source: EIA Weekly Retail Gasoline and Diesel Prices.{showForecast ? " Forecast: EIA Short-Term Energy Outlook (STEO), updated monthly." : ""}</div>
-            <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 18, opacity: 0.4 }} />
+            <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
           </div>
         </div>
       </div>
@@ -272,7 +349,7 @@ export default function GasPricesClient({
           <div className="stat-value">
             {latestNational ? fmtDollars(latestNational.price) : "\u2014"}
             {weekChange != null && (
-              <span style={{ fontSize: 12, fontWeight: 600, marginLeft: 6, color: weekChange >= 0 ? "#a03030" : "#10b981" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, marginLeft: 6, color: weekChange >= 0 ? "#a03030" : "#10b981" }}>
                 {weekChange >= 0 ? "\u25B2" : "\u25BC"} {fmtDollars(Math.abs(weekChange))}
               </span>
             )}
@@ -283,7 +360,7 @@ export default function GasPricesClient({
           <div className="stat-label">Highest State</div>
           <div className="stat-value">
             {sortedStates[0] ? fmtDollars(sortedStates[0].regular) : "\u2014"}
-            {highDiff > 0 && <span style={{ fontSize: 11, color: "#a03030", marginLeft: 6 }}>+{fmtDollars(highDiff)} vs nat'l</span>}
+            {highDiff > 0 && <span style={{ fontSize: 11, color: "#a03030", marginLeft: 6 }}>+{fmtDollars(highDiff)} vs nat&apos;l</span>}
           </div>
           <div className="stat-sub">{sortedStates[0]?.state_name || ""}</div>
         </div>
@@ -291,7 +368,7 @@ export default function GasPricesClient({
           <div className="stat-label">{selectedStateName || "Lowest State"}</div>
           <div className="stat-value">
             {selectedAaa ? fmtDollars(selectedAaa.regular) : lowestState ? fmtDollars(lowestState.regular) : "\u2014"}
-            {!selectedAaa && lowDiff < 0 && <span style={{ fontSize: 11, color: "#10b981", marginLeft: 6 }}>{fmtDollars(lowDiff)} vs nat'l</span>}
+            {!selectedAaa && lowDiff < 0 && <span style={{ fontSize: 11, color: "#10b981", marginLeft: 6 }}>{fmtDollars(lowDiff)} vs nat&apos;l</span>}
           </div>
           <div className="stat-sub">
             {selectedAaa ? "click map to change" : lowestState?.state_name || ""}
