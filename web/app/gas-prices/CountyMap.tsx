@@ -33,9 +33,10 @@ interface CountyMapProps {
   onStateClick?: (stateCode: string) => void;
   selectedState?: string;
   countyData?: CountyInfo[];
+  nationalAvg?: number;
 }
 
-export default function CountyMap({ aaaStates, onStateClick, selectedState, countyData = [] }: CountyMapProps) {
+export default function CountyMap({ aaaStates, onStateClick, selectedState, countyData = [], nationalAvg = 0 }: CountyMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const countyGeoRef = useRef<GeoJSON.FeatureCollection | null>(null);
@@ -381,12 +382,23 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
                   Hide
                 </button>
               </div>
-              {stateAaa && (
-                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--blue-main)", fontFamily: "var(--font-display)", marginBottom: 4 }}>
-                  {fmtDollars(stateAaa.regular)}
-                  <span style={{ fontSize: 9, fontWeight: 500, color: "var(--blue-mid)", marginLeft: 3 }}>/gal avg</span>
-                </div>
-              )}
+              {stateAaa && (() => {
+                const diff = nationalAvg > 0 ? ((stateAaa.regular! - nationalAvg) / nationalAvg) * 100 : 0;
+                const absDiff = Math.abs(diff);
+                return (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: "var(--blue-main)", fontFamily: "var(--font-display)" }}>
+                      {fmtDollars(stateAaa.regular)}
+                    </span>
+                    <span style={{ fontSize: 9, fontWeight: 500, color: "var(--blue-mid)", marginLeft: 3 }}>/gal</span>
+                    {diff !== 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 600, marginLeft: 6, color: diff > 0 ? "#a03030" : "#10b981" }}>
+                        {diff > 0 ? "+" : "-"}{absDiff.toFixed(1)}% vs nat'l
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: 8, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3 }}>
                 {countyData.length} {countyLabel}
               </div>
