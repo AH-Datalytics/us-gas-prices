@@ -41,6 +41,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
   const countyGeoRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const [loading, setLoading] = useState(true);
   const [level, setLevel] = useState<"state" | "county">("state");
+  const [showPanel, setShowPanel] = useState(true);
   const levelRef = useRef(level);
   levelRef.current = level;
   const aaaStatesRef = useRef(aaaStates);
@@ -273,6 +274,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
 
     // Switch to county view + thicken state borders
     setLevel("county");
+    setShowPanel(true);
     try { m.setPaintProperty("state-borders", "line-width", 2.5); } catch {}
 
     // Find state FIPS and zoom to its bounds
@@ -341,11 +343,27 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
       <div style={{ position: "relative" }}>
         <div ref={mapContainer} style={{ width: "100%", height: 300, borderRadius: 4 }} />
 
-        {/* Floating info card — right side, scrollable county list */}
-        {selectedState && countyData.length > 0 && (() => {
+        {/* Show/hide panel button */}
+        {selectedState && countyData.length > 0 && !showPanel && (
+          <button
+            onClick={() => setShowPanel(true)}
+            style={{
+              position: "absolute", top: 8, right: 8, zIndex: 20,
+              background: "rgba(255,255,255,0.92)", backdropFilter: "blur(4px)",
+              border: "1px solid var(--border)", borderRadius: 4,
+              padding: "3px 8px", fontSize: 9, fontWeight: 600,
+              color: "var(--blue-main)", cursor: "pointer", fontFamily: "inherit",
+              boxShadow: "0 1px 4px rgba(26,58,92,0.12)",
+            }}
+          >
+            Show details
+          </button>
+        )}
+
+        {/* Floating info card — right side */}
+        {selectedState && countyData.length > 0 && showPanel && (() => {
           const stateAaa = aaaStates.find((s) => s.state === selectedState);
           const stateName = stateAaa?.state_name || selectedState;
-          // Use "parishes" for Louisiana, "boroughs" for Alaska
           const countyLabel = selectedState === "LA" ? "parishes" : selectedState === "AK" ? "boroughs/areas" : "counties";
           return (
             <div style={{
@@ -357,7 +375,12 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
               animation: "card-in 0.25s ease both",
               display: "flex", flexDirection: "column", overflow: "hidden",
             }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--blue-dark)", marginBottom: 1 }}>{stateName}</div>
+              <div className="flex items-center justify-between" style={{ marginBottom: 1 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--blue-dark)" }}>{stateName}</span>
+                <button onClick={() => setShowPanel(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 600, color: "var(--blue-main)", fontFamily: "inherit", padding: 0 }}>
+                  Hide
+                </button>
+              </div>
               {stateAaa && (
                 <div style={{ fontSize: 16, fontWeight: 800, color: "var(--blue-main)", fontFamily: "var(--font-display)", marginBottom: 4 }}>
                   {fmtDollars(stateAaa.regular)}

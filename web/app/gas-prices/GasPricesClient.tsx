@@ -293,7 +293,7 @@ export default function GasPricesClient({
                 {latestNational ? fmtDollars(latestNational.price) : "\u2014"}
                 {weekChange != null && (
                   <span style={{ fontSize: 11, fontWeight: 600, marginLeft: 6, color: weekChange >= 0 ? "#a03030" : "#10b981" }}>
-                    {weekChange >= 0 ? "\u25B2" : "\u25BC"} {fmtDollars(Math.abs(weekChange))}
+                    {weekChange >= 0 ? "\u25B2" : "\u25BC"} {fmtDollars(Math.abs(weekChange))} vs last week
                   </span>
                 )}
               </div>
