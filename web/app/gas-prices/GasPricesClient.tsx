@@ -169,7 +169,7 @@ export default function GasPricesClient({
           {/* County Choropleth Map */}
           <div className="mb-6">
             <ChartCard title="Gas Prices by County" subtitle="Today's average regular gasoline price per gallon — click a county to view state details" source="AAA Fuel Prices (130,000+ stations)">
-              <CountyMap onStateClick={handleStateSelect} />
+              <CountyMap aaaStates={aaaStates} onStateClick={handleStateSelect} />
             </ChartCard>
           </div>
 
