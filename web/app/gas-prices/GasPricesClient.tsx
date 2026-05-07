@@ -164,9 +164,23 @@ export default function GasPricesClient({
     forecastStart = lastActual;
     const bridgeIdx = chartData.findIndex((d) => d.period === lastActual);
     if (bridgeIdx >= 0) chartData[bridgeIdx].forecast = chartData[bridgeIdx].price;
-    for (const row of steoData) {
-      if (row.period > lastActual) {
-        chartData.push({ period: row.period, price: null, forecast: row.value });
+    // Interpolate monthly forecast to weekly points so it matches price data density
+    const futureMonths = steoData.filter((r) => r.period > lastActual);
+    for (let i = 0; i < futureMonths.length; i++) {
+      const cur = futureMonths[i];
+      const next = futureMonths[i + 1];
+      // Parse YYYY-MM to generate weekly dates within each month
+      const [y, m] = cur.period.split("-").map(Number);
+      const monthStart = new Date(y, m - 1, 1);
+      const monthEnd = next
+        ? new Date(Number(next.period.split("-")[0]), Number(next.period.split("-")[1]) - 1, 1)
+        : new Date(y, m, 1);
+      const weeks = Math.max(1, Math.round((monthEnd.getTime() - monthStart.getTime()) / (7 * 86400000)));
+      const valStep = next ? (next.value - cur.value) / weeks : 0;
+      for (let w = 0; w < weeks; w++) {
+        const d = new Date(monthStart.getTime() + w * 7 * 86400000);
+        const pd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        chartData.push({ period: pd, price: null, forecast: cur.value + valStep * w });
       }
     }
   }
