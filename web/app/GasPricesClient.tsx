@@ -228,7 +228,7 @@ export default function GasPricesClient({
           </div>
           <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} selectedState={selectedState} countyData={countyData} nationalAvg={natAvg} />
           <div className="flex items-center justify-between" style={{ marginTop: 4 }}>
-            <div className="source">Source: AAA Fuel Prices</div>
+            <div className="source">Source: <a href="https://gasprices.aaa.com" target="_blank" rel="noopener noreferrer">AAA Fuel Prices</a></div>
             <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
           </div>
         </div>
@@ -343,7 +343,7 @@ export default function GasPricesClient({
             </ResponsiveContainer>
           </div>
           <div className="flex items-center justify-between">
-            <div className="source">Source: EIA Weekly Retail Gasoline and Diesel Prices.{showForecast ? " Forecast: EIA Short-Term Energy Outlook (STEO), updated monthly." : ""}</div>
+            <div className="source">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank" rel="noopener noreferrer">EIA Weekly Retail Gasoline and Diesel Prices</a>.{showForecast ? <> Forecast: <a href="https://www.eia.gov/outlooks/steo/" target="_blank" rel="noopener noreferrer">EIA Short-Term Energy Outlook (STEO)</a>, updated monthly.</> : ""}</div>
             <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
           </div>
         </div>
