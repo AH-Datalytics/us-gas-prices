@@ -35,7 +35,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add web/us_energy.db
+          git add -f web/us_energy.db
           git diff --cached --quiet || git commit -m "Auto-update database [skip ci]"
           git push
 
