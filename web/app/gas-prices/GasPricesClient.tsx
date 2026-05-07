@@ -331,7 +331,7 @@ export default function GasPricesClient({
                   height={36}
                 />
                 <YAxis tick={{ fontSize: 10, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
-                  tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={[0, "auto"]}
+                  tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={[0, "dataMax+0.25"]}
                 />
                 <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 11, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
                   formatter={(value: unknown, name: unknown) => [value != null ? `$${Number(value).toFixed(3)}` : "\u2014", name === "price" ? "Actual" : "Forecast"]}
