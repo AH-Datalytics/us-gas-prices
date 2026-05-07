@@ -234,7 +234,7 @@ export default function GasPricesClient({
         </div>
 
         {/* Chart */}
-        <div className="chart-card" ref={chartRef} style={{ padding: "14px 16px 10px" }}>
+        <div className="chart-card" ref={chartRef} style={{ padding: "14px 16px 10px", display: "flex", flexDirection: "column" }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
@@ -283,7 +283,7 @@ export default function GasPricesClient({
             })}
           </div>
 
-          <div style={{ height: 360 }}>
+          <div style={{ flex: 1, minHeight: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#ddd8ce" vertical={false} />
