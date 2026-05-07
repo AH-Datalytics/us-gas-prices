@@ -13,10 +13,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from backfill import (
     backfill_gas_prices,
     backfill_steo,
-    backfill_grid_demand,
-    backfill_grid_fuel,
-    backfill_state_generation,
-    backfill_national_energy,
     DB_PATH,
     API_KEY,
 )
@@ -37,20 +33,10 @@ def main():
 
     print(f"=== Daily Update — {datetime.now().isoformat()} ===")
 
-    # ── EIA data (only latest — gas prices + STEO forecasts) ──
+    # ── EIA data ──
     print("\n── EIA Data ──")
     backfill_gas_prices(conn)
     backfill_steo(conn)
-
-    # Grid/generation/national — these are large and slow, only run on 1st and 15th
-    if date.today().day in (1, 15):
-        print("\n── EIA Bulk (1st/15th only) ──")
-        backfill_grid_demand(conn)
-        backfill_grid_fuel(conn)
-        backfill_state_generation(conn)
-        backfill_national_energy(conn)
-    else:
-        print("  Skipping grid/generation/national (runs 1st & 15th)")
 
     # ── AAA data ──
     print("\n── AAA Data ──")
