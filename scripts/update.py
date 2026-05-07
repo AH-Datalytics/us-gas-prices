@@ -6,7 +6,7 @@ Intended to be called by GitHub Actions.
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, date
 
 # Reuse backfill functions — they all use INSERT OR REPLACE so re-fetching is safe
 sys.path.insert(0, os.path.dirname(__file__))
@@ -37,14 +37,20 @@ def main():
 
     print(f"=== Daily Update — {datetime.now().isoformat()} ===")
 
-    # ── EIA data ──
+    # ── EIA data (only latest — gas prices + STEO forecasts) ──
     print("\n── EIA Data ──")
     backfill_gas_prices(conn)
     backfill_steo(conn)
-    backfill_grid_demand(conn)
-    backfill_grid_fuel(conn)
-    backfill_state_generation(conn)
-    backfill_national_energy(conn)
+
+    # Grid/generation/national — these are large and slow, only run on 1st and 15th
+    if date.today().day in (1, 15):
+        print("\n── EIA Bulk (1st/15th only) ──")
+        backfill_grid_demand(conn)
+        backfill_grid_fuel(conn)
+        backfill_state_generation(conn)
+        backfill_national_energy(conn)
+    else:
+        print("  Skipping grid/generation/national (runs 1st & 15th)")
 
     # ── AAA data ──
     print("\n── AAA Data ──")
@@ -54,12 +60,16 @@ def main():
     except Exception as e:
         print(f"  WARNING: AAA state averages failed: {e}")
 
-    print(f"\n  Scraping county data for {len(STATES)} states...")
-    for state_code in sorted(STATES.keys()):
-        try:
-            scrape_county_data(conn, state_code)
-        except Exception as e:
-            print(f"  WARNING: AAA county {state_code} failed: {e}")
+    # County data — only on Mondays (day 0) to keep daily runs fast
+    if date.today().weekday() == 0:
+        print(f"\n  Scraping county data for {len(STATES)} states (Monday run)...")
+        for state_code in sorted(STATES.keys()):
+            try:
+                scrape_county_data(conn, state_code)
+            except Exception as e:
+                print(f"  WARNING: AAA county {state_code} failed: {e}")
+    else:
+        print("  Skipping county scrape (runs Mondays)")
 
     conn.close()
     print("\nDaily update complete!")
