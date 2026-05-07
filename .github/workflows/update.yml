@@ -26,6 +26,7 @@ jobs:
           playwright install chromium --with-deps
 
       - name: Run daily update (EIA + AAA)
+        timeout-minutes: 20
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/update.py

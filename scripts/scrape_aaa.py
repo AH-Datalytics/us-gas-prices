@@ -138,7 +138,9 @@ def scrape_county_data(conn, state_code):
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        context = browser.new_context()
+        context.set_default_timeout(20000)
+        page = context.new_page()
 
         # Capture the map data JS response
         map_data_text = []
@@ -153,9 +155,10 @@ def scrape_county_data(conn, state_code):
         page.on("response", on_response)
         page.goto(
             f"https://gasprices.aaa.com/?state={state_code}",
-            wait_until="networkidle",
-            timeout=30000,
+            wait_until="domcontentloaded",
+            timeout=20000,
         )
+        page.wait_for_timeout(3000)  # brief wait for map data JS to fire
 
         # Also scrape metro area tables
         metro_rows = page.query_selector_all("table.sortable-table tbody tr")
