@@ -213,7 +213,7 @@ export default function GasPricesClient({
           <div className="flex items-center justify-between mb-1">
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>US Gas Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>Click a state for county breakdown</div>
+              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>Click a state for county breakdown &middot; Updated {aaaStates[0]?.date || ""}</div>
             </div>
             <div className="flex items-center gap-3">
               <button className={exportBtnClass} onClick={() => {
@@ -331,7 +331,7 @@ export default function GasPricesClient({
                   height={36}
                 />
                 <YAxis tick={{ fontSize: 10, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
-                  tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={["auto", "auto"]}
+                  tickFormatter={(v: number) => `$${v.toFixed(2)}`} domain={[0, "auto"]}
                 />
                 <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 11, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
                   formatter={(value: unknown, name: unknown) => [value != null ? `$${Number(value).toFixed(3)}` : "\u2014", name === "price" ? "Actual" : "Forecast"]}
