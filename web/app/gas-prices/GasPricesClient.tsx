@@ -191,6 +191,7 @@ export default function GasPricesClient({
 
   return (
     <div style={{ maxWidth: 1400 }} className="mx-auto px-6 py-4">
+      <h1 style={{ fontSize: 26, fontWeight: 800, color: "var(--blue-dark)", letterSpacing: -0.5, margin: "8px 0 16px" }}>Weekly Gas Price <span style={{ color: "#c0392b" }}>Breakdown</span></h1>
       {/* Map + Chart side by side */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
         {/* Map */}
