@@ -197,3 +197,11 @@ body {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   min-height: 200px; color: var(--blue-mid); font-size: 13px; font-weight: 500;
 }
+
+/* ── EMBED MODE (portal iframe) ────────── */
+.in-iframe main { padding-top: 0 !important; }
+.in-iframe main > div { padding-top: 4px !important; padding-bottom: 8px !important; }
+.in-iframe main h1 { font-size: 22px !important; margin: 4px 0 10px !important; }
+.in-iframe .stat-card { padding: 10px 14px !important; }
+.in-iframe .stat-label { font-size: 9px !important; }
+.in-iframe .stat-value { font-size: 22px !important; }
