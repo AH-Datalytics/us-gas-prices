@@ -36,6 +36,18 @@ interface CountyMapProps {
   nationalAvg?: number;
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
+
 export default function CountyMap({ aaaStates, onStateClick, selectedState, countyData = [], nationalAvg = 0 }: CountyMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -43,6 +55,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
   const [loading, setLoading] = useState(true);
   const [level, setLevel] = useState<"state" | "county">("state");
   const [showPanel, setShowPanel] = useState(true);
+  const isMobile = useIsMobile();
   const levelRef = useRef(level);
   levelRef.current = level;
   const aaaStatesRef = useRef(aaaStates);
@@ -305,9 +318,11 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
       }
     }
     if (minLng < maxLng && minLat < maxLat) {
-      // Offset padding: more on the right to account for the info panel (200px wide)
+      const mobile = window.innerWidth < 640;
       m.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
-        padding: { top: 30, bottom: 30, left: 30, right: 220 },
+        padding: mobile
+          ? { top: 20, bottom: 20, left: 20, right: 20 }
+          : { top: 30, bottom: 30, left: 30, right: 220 },
         duration: 800,
       });
     }
@@ -342,7 +357,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
         </div>
       )}
       <div style={{ position: "relative" }}>
-        <div ref={mapContainer} style={{ width: "100%", height: 400, borderRadius: 4 }} />
+        <div ref={mapContainer} style={{ width: "100%", height: isMobile ? 280 : 400, borderRadius: 4 }} />
 
         {/* Show/hide panel button */}
         {selectedState && countyData.length > 0 && !showPanel && (
@@ -368,10 +383,14 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
           const countyLabel = selectedState === "LA" ? "parishes" : selectedState === "AK" ? "boroughs/areas" : "counties";
           return (
             <div style={{
-              position: "absolute", top: 6, right: 6, bottom: 6, zIndex: 20,
+              position: "absolute", zIndex: 20,
+              ...(isMobile
+                ? { left: 6, right: 6, bottom: 6, maxHeight: "50%", borderTop: "3px solid var(--blue-main)" }
+                : { top: 6, right: 6, bottom: 6, width: 200, borderLeft: "3px solid var(--blue-main)" }
+              ),
               background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)",
-              border: "1px solid var(--border)", borderLeft: "3px solid var(--blue-main)",
-              borderRadius: 6, padding: "8px 10px", width: 200,
+              border: "1px solid var(--border)",
+              borderRadius: 6, padding: "8px 10px",
               boxShadow: "0 2px 12px rgba(26,58,92,0.15)",
               animation: "card-in 0.25s ease both",
               display: "flex", flexDirection: "column", overflow: "hidden",
@@ -421,14 +440,14 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
         })()}
       </div>
       {/* Legend */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
         <span>Lower</span>
         <div style={{
-          width: 140, height: 8, borderRadius: 4,
+          width: isMobile ? 100 : 140, height: 8, borderRadius: 4,
           background: "linear-gradient(to right, #2d5f8a, #6a9bc4, #f5f0e8, #d4826a, #a03030)",
         }} />
         <span>Higher</span>
-        <span style={{ marginLeft: 12, color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
+        <span style={{ marginLeft: 8, color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
         <span>No data</span>
       </div>
     </div>

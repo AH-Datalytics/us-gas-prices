@@ -204,16 +204,16 @@ export default function GasPricesClient({
   const exportBtnClass = "text-[10px] text-[var(--blue-mid)] hover:text-[var(--blue-main)] underline decoration-dotted underline-offset-2 cursor-pointer transition-colors";
 
   return (
-    <div style={{ maxWidth: 1400 }} className="mx-auto px-6 py-4">
-      <h1 style={{ fontSize: 26, fontWeight: 800, color: "var(--blue-dark)", letterSpacing: -0.5, margin: "8px 0 16px" }}>Weekly Gas Price <span style={{ color: "#c0392b" }}>Breakdown</span></h1>
+    <div style={{ maxWidth: 1400 }} className="mx-auto px-3 sm:px-4 md:px-6 py-3 md:py-4">
+      <h1 className="gas-page-title">Weekly Gas Price <span style={{ color: "#c0392b" }}>Breakdown</span></h1>
       {/* Map + Chart side by side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
         {/* Map */}
         <div className="chart-card" ref={mapRef} style={{ padding: "14px 16px 10px", position: "relative" }}>
           <div className="flex items-center justify-between mb-1">
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>US Gas Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>Click a state for county breakdown &middot; Updated {aaaStates[0]?.date || ""}</div>
+              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>Tap a state for county breakdown &middot; Updated {aaaStates[0]?.date || ""}</div>
             </div>
             <div className="flex items-center gap-3">
               <button className={exportBtnClass} onClick={() => {
@@ -235,15 +235,15 @@ export default function GasPricesClient({
 
         {/* Chart */}
         <div className="chart-card" ref={chartRef} style={{ padding: "14px 16px 10px", display: "flex", flexDirection: "column" }}>
-          <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
-            <div>
+          <div className="chart-header">
+            <div style={{ minWidth: 0 }}>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
               <div className="subtitle" style={{ marginBottom: 0, fontSize: 10 }}>Weekly, $/gallon</div>
             </div>
-            <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+            <div className="chart-controls">
               <button className={exportBtnClass} onClick={() => downloadCsv(chartData, `gas-prices-${fuel}.csv`)}>CSV</button>
               <button className={exportBtnClass} onClick={() => downloadJpeg(chartRef.current, `gas-prices-${fuel}.jpg`)}>JPEG</button>
-              <span style={{ width: 1, height: 14, background: "var(--blue-light)", margin: "0 2px" }} />
+              <span className="hidden sm:inline-block" style={{ width: 1, height: 14, background: "var(--blue-light)", margin: "0 2px" }} />
               <ScopeToggle
                 options={[
                   { value: "regular_gas", label: "Regular" },
@@ -258,7 +258,7 @@ export default function GasPricesClient({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5" style={{ marginBottom: 6 }}>
+          <div className="flex items-center gap-1.5 overflow-x-auto" style={{ marginBottom: 6 }}>
             {[
               { label: "3M", months: 3 },
               { label: "6M", months: 6 },
@@ -350,7 +350,7 @@ export default function GasPricesClient({
       </div>
 
       {/* Stat cards — swap content based on state selection */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
         {!selectedState ? (
           <>
             <div className="stat-box">
@@ -358,7 +358,7 @@ export default function GasPricesClient({
               <div className="stat-value">
                 {latestNational ? fmtDollars(latestNational.price) : "\u2014"}
                 {weekChange != null && (
-                  <span style={{ fontSize: 11, fontWeight: 600, marginLeft: 6, color: weekChange >= 0 ? "#a03030" : "#10b981" }}>
+                  <span className="stat-diff" style={{ fontSize: 11, fontWeight: 600, marginLeft: 6, color: weekChange >= 0 ? "#a03030" : "#10b981" }}>
                     {weekChange >= 0 ? "\u25B2" : "\u25BC"} {fmtDollars(Math.abs(weekChange))} vs last week
                   </span>
                 )}
@@ -369,7 +369,7 @@ export default function GasPricesClient({
               <div className="stat-label">Highest State</div>
               <div className="stat-value">
                 {sortedStates[0] ? fmtDollars(sortedStates[0].regular) : "\u2014"}
-                {highDiff > 0 && <span style={{ fontSize: 11, color: "#a03030", marginLeft: 6 }}>+{fmtDollars(highDiff)} vs nat&apos;l</span>}
+                {highDiff > 0 && <span className="stat-diff" style={{ fontSize: 11, color: "#a03030", marginLeft: 6 }}>+{fmtDollars(highDiff)} vs nat&apos;l</span>}
               </div>
               <div className="stat-sub">{sortedStates[0]?.state_name || ""}</div>
             </div>
@@ -377,7 +377,7 @@ export default function GasPricesClient({
               <div className="stat-label">Lowest State</div>
               <div className="stat-value">
                 {lowestState ? fmtDollars(lowestState.regular) : "\u2014"}
-                {lowDiff < 0 && <span style={{ fontSize: 11, color: "#10b981", marginLeft: 6 }}>{fmtDollars(lowDiff)} vs nat&apos;l</span>}
+                {lowDiff < 0 && <span className="stat-diff" style={{ fontSize: 11, color: "#10b981", marginLeft: 6 }}>{fmtDollars(lowDiff)} vs nat&apos;l</span>}
               </div>
               <div className="stat-sub">{lowestState?.state_name || ""}</div>
             </div>
