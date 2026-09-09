@@ -1,4 +1,4 @@
-import { getGasPrices, getSteoForecast, getAaaStatePrices } from "@/lib/queries";
+import { getGasPrices, getSteoForecast, getAaaStatePrices, getCpi } from "@/lib/queries";
 import GasPricesClient from "./GasPricesClient";
 
 export default function GasPricesPage() {
@@ -8,6 +8,7 @@ export default function GasPricesPage() {
   const steoGas = getSteoForecast("MGRARUS_$");
   const steoDiesel = getSteoForecast("DSRTUUS_$");
   const aaaStates = getAaaStatePrices();
+  const cpi = getCpi();
 
   return (
     <GasPricesClient
@@ -16,6 +17,7 @@ export default function GasPricesPage() {
       steoGas={steoGas}
       steoDiesel={steoDiesel}
       aaaStates={aaaStates}
+      cpi={cpi}
     />
   );
 }

@@ -9,8 +9,8 @@ import ScopeToggle from "@/components/ScopeToggle";
 import { US_STATES } from "@/lib/constants";
 
 const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 400, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
-import type { GasPriceRow, SteoRow, AaaStateRow } from "@/lib/queries";
-import { fmtDollars } from "@/lib/utils";
+import type { GasPriceRow, SteoRow, AaaStateRow, CpiRow } from "@/lib/queries";
+import { fmtDollars, fmtMonth } from "@/lib/utils";
 
 interface Props {
   nationalRegular: GasPriceRow[];
@@ -18,6 +18,47 @@ interface Props {
   steoGas: SteoRow[];
   steoDiesel: SteoRow[];
   aaaStates: AaaStateRow[];
+  cpi: CpiRow[];
+}
+
+// Base period for real-dollar conversion. Prices in "adjusted" mode are
+// expressed in dollars of this month.
+const CPI_BASE_PERIOD = "2026-01";
+const CPI_BASE_LABEL = "January 2026";
+
+/**
+ * Build a period -> deflator lookup. Multiplying a nominal price by the
+ * deflator for its month gives the price in CPI_BASE_PERIOD dollars.
+ *
+ * CPI is monthly and occasionally has gaps (BLS did not publish October
+ * 2025), and it always lags the gas price series -- and the STEO forecast
+ * runs years past it. Both cases carry the nearest earlier index forward,
+ * so recent weeks and forecast points are shown in roughly current dollars
+ * rather than dropped.
+ */
+function buildDeflators(cpi: CpiRow[]) {
+  const base = cpi.find((r) => r.period === CPI_BASE_PERIOD)?.value;
+  if (!base || cpi.length === 0) return null;
+  const months = cpi.map((r) => r.period);
+  const byMonth = new Map(cpi.map((r) => [r.period, r.value]));
+  const lastMonth = months[months.length - 1];
+
+  const cache = new Map<string, number>();
+  return (period: string): number => {
+    const month = period.slice(0, 7);
+    const hit = cache.get(month);
+    if (hit !== undefined) return hit;
+    let value = byMonth.get(month);
+    if (value === undefined) {
+      // Walk back to the most recent published month (gap), or clamp to the
+      // last one we have (period is newer than CPI).
+      const candidate = month > lastMonth ? lastMonth : months.filter((m) => m < month).pop();
+      value = candidate ? byMonth.get(candidate) : undefined;
+    }
+    const deflator = value ? base / value : 1;
+    cache.set(month, deflator);
+    return deflator;
+  };
 }
 
 function downloadCsv(data: { period: string; price: number | null; forecast: number | null }[], filename: string) {
@@ -118,10 +159,11 @@ function fmtAxisLabel(v: string, yearOnly: boolean): string {
 }
 
 export default function GasPricesClient({
-  nationalRegular, nationalDiesel, steoGas, steoDiesel, aaaStates,
+  nationalRegular, nationalDiesel, steoGas, steoDiesel, aaaStates, cpi,
 }: Props) {
   const [fuel, setFuel] = useState<"regular_gas" | "diesel">("regular_gas");
   const [showForecast, setShowForecast] = useState(false);
+  const [realDollars, setRealDollars] = useState(false);
   const [selectedState, setSelectedState] = useState("");
   const [countyData, setCountyData] = useState<{ county: string; price: number }[]>([]);
   const [countyLoading, setCountyLoading] = useState(false);
@@ -185,6 +227,25 @@ export default function GasPricesClient({
     }
   }
 
+  const deflate = realDollars ? buildDeflators(cpi) : null;
+  if (deflate) {
+    for (const d of chartData) {
+      const factor = deflate(d.period);
+      if (d.price != null) d.price *= factor;
+      if (d.forecast != null) d.forecast *= factor;
+    }
+  }
+  // Fixed $6 ceiling by default, but real-dollar prices run past it (the
+  // June 2008 peak is about $6.15 in 2026 dollars), so grow to the next
+  // whole dollar rather than clipping the line.
+  const yMax = Math.max(6, Math.ceil(
+    chartData.reduce((m, d) => Math.max(m, d.price ?? 0, d.forecast ?? 0), 0)
+  ));
+  const yTicks = Array.from({ length: yMax + 1 }, (_, i) => i);
+
+  const cpiReady = cpi.some((r) => r.period === CPI_BASE_PERIOD);
+  const latestCpiMonth = cpi.length > 0 ? cpi[cpi.length - 1].period : "";
+
   const latestNational = allPriceData[allPriceData.length - 1];
   const prevWeek = allPriceData.length >= 2 ? allPriceData[allPriceData.length - 2] : null;
   const weekChange = latestNational && prevWeek ? latestNational.price - prevWeek.price : null;
@@ -238,7 +299,7 @@ export default function GasPricesClient({
           <div className="chart-header">
             <div style={{ minWidth: 0 }}>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>U.S. {fuel === "regular_gas" ? "Regular Gasoline" : "Diesel"} Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 0, fontSize: 10 }}>Weekly, $/gallon</div>
+              <div className="subtitle" style={{ marginBottom: 0, fontSize: 10 }}>Weekly, $/gallon{realDollars ? ` (${CPI_BASE_LABEL} dollars)` : ""}</div>
             </div>
             <div className="chart-controls">
               <button className={exportBtnClass} onClick={() => downloadCsv(chartData, `gas-prices-${fuel}.csv`)}>CSV</button>
@@ -255,6 +316,15 @@ export default function GasPricesClient({
               <button className={`forecast-btn ${showForecast ? "active" : ""}`} onClick={() => setShowForecast(!showForecast)}>
                 Forecast
               </button>
+              {cpiReady && (
+                <button
+                  className={`forecast-btn ${realDollars ? "active" : ""}`}
+                  onClick={() => setRealDollars(!realDollars)}
+                  title={`Show prices in ${CPI_BASE_LABEL} dollars`}
+                >
+                  Inflation Adj.
+                </button>
+              )}
             </div>
           </div>
 
@@ -331,7 +401,7 @@ export default function GasPricesClient({
                   height={36}
                 />
                 <YAxis tick={{ fontSize: 10, fill: "#5a6a7a" }} tickLine={false} axisLine={false}
-                  tickFormatter={(v: number) => `$${v.toFixed(0)}`} domain={[0, 6]} ticks={[0, 1, 2, 3, 4, 5, 6]}
+                  tickFormatter={(v: number) => `$${v.toFixed(0)}`} domain={[0, yMax]} ticks={yTicks}
                 />
                 <Tooltip contentStyle={{ background: "#fff", border: "1px solid #ddd8ce", borderRadius: 6, fontSize: 11, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
                   formatter={(value: unknown, name: unknown) => [value != null ? `$${Number(value).toFixed(3)}` : "\u2014", name === "price" ? "Actual" : "Forecast"]}
@@ -343,7 +413,7 @@ export default function GasPricesClient({
             </ResponsiveContainer>
           </div>
           <div className="flex items-center justify-between">
-            <div className="source">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank" rel="noopener noreferrer">EIA Weekly Retail Gasoline and Diesel Prices</a>.{showForecast ? <> Forecast: <a href="https://www.eia.gov/outlooks/steo/" target="_blank" rel="noopener noreferrer">EIA Short-Term Energy Outlook (STEO)</a>, updated monthly.</> : ""}</div>
+            <div className="source">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank" rel="noopener noreferrer">EIA Weekly Retail Gasoline and Diesel Prices</a>.{showForecast ? <> Forecast: <a href="https://www.eia.gov/outlooks/steo/" target="_blank" rel="noopener noreferrer">EIA Short-Term Energy Outlook (STEO)</a>, updated monthly.</> : ""}{realDollars ? <> Prices adjusted for inflation to {CPI_BASE_LABEL} dollars using the <a href="https://www.bls.gov/cpi/" target="_blank" rel="noopener noreferrer">BLS Consumer Price Index</a> (CPI-U, all items, seasonally adjusted){latestCpiMonth ? <>; dates after {fmtMonth(latestCpiMonth)} use the latest available index</> : ""}.</> : ""}</div>
             <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
           </div>
         </div>

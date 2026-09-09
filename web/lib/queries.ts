@@ -203,3 +203,19 @@ export function getAaaCountyPrices(state: string): AaaCountyRow[] {
      ORDER BY price DESC`
   ).all(state, state) as AaaCountyRow[];
 }
+
+// ─── CPI (BLS) ───────────────────────────
+
+export interface CpiRow {
+  period: string; // YYYY-MM
+  value: number;
+}
+
+/** Monthly CPI-U (all items, US city average, seasonally adjusted). */
+export function getCpi(): CpiRow[] {
+  return cachedPrepare(
+    `SELECT period, value FROM cpi
+     WHERE series_id = 'CUSR0000SA0' AND value IS NOT NULL
+     ORDER BY period`
+  ).all() as CpiRow[];
+}

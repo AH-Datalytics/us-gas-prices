@@ -80,6 +80,14 @@ CREATE TABLE IF NOT EXISTS steo_forecast (
   PRIMARY KEY (period, series_id, forecast_date)
 );
 
+-- CPI-U (BLS): monthly, used to deflate nominal prices to real dollars
+CREATE TABLE IF NOT EXISTS cpi (
+  period TEXT NOT NULL,
+  series_id TEXT NOT NULL,
+  value REAL,
+  PRIMARY KEY (period, series_id)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_grid_demand_resp ON grid_demand(respondent, period);
 CREATE INDEX IF NOT EXISTS idx_grid_fuel_resp ON grid_fuel(respondent, period);

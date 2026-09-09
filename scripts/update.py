@@ -16,6 +16,7 @@ from backfill import (
     DB_PATH,
     API_KEY,
 )
+from backfill_cpi import backfill_cpi
 from scrape_aaa import ensure_schema as ensure_aaa_schema, scrape_state_averages, scrape_county_data, STATES
 
 
@@ -37,6 +38,15 @@ def main():
     print("\n── EIA Data ──")
     backfill_gas_prices(conn)
     backfill_steo(conn)
+
+    # ── CPI (BLS) ──
+    # Only the trailing two years — CPI revisions are rare and the BLS
+    # public API is rate-limited per IP.
+    print("\n── CPI ──")
+    try:
+        backfill_cpi(conn, date.today().year - 1)
+    except Exception as e:
+        print(f"  WARNING: CPI update failed: {e}")
 
     # ── AAA data ──
     print("\n── AAA Data ──")
