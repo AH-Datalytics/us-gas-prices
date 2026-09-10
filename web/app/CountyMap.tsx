@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { fmtDollars } from "@/lib/utils";
+import { useIsMobile } from "@/lib/useIsMobile";
 import type { AaaStateRow, AaaStateChangeRow, ChangeDates } from "@/lib/queries";
 
 interface CountyPrice {
@@ -131,6 +132,23 @@ interface CountyInfo {
   price: number;
 }
 
+const US_BOUNDS: [[number, number], [number, number]] = [[-130, 22], [-62, 52]];
+
+/**
+ * Width-to-height ratio of US_BOUNDS in Web Mercator. The phone layout sizes
+ * the map by this instead of a fixed height: at a fixed 280px the bounds are
+ * width-constrained, so more than half the box was empty ocean above and below
+ * the country.
+ */
+const US_ASPECT = (() => {
+  const merc = (lat: number) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+  const [[w, s], [e, n]] = US_BOUNDS;
+  return (((e - w) * Math.PI) / 180) / (merc(n) - merc(s));
+})();
+
+/** Tighter padding on a phone — 20px of chrome is a lot of a 334px map. */
+const fitPadding = (mobile: boolean) => (mobile ? 8 : 20);
+
 interface CountyMapProps {
   aaaStates: AaaStateRow[];
   onStateClick?: (stateCode: string) => void;
@@ -141,18 +159,6 @@ interface CountyMapProps {
   stateDates?: ChangeDates;
   /** Lets the card caption follow what the map is actually showing. */
   onViewChange?: (view: { level: "state" | "county"; metric: MapMetric; asOf: string }) => void;
-}
-
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 639px)");
-    setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
 }
 
 export default function CountyMap({
@@ -168,6 +174,8 @@ export default function CountyMap({
   const [countyDates, setCountyDates] = useState<ChangeDates | null>(null);
   const [showPanel, setShowPanel] = useState(true);
   const isMobile = useIsMobile();
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
   const levelRef = useRef(level);
   levelRef.current = level;
   const metricRef = useRef(metric);
@@ -202,8 +210,8 @@ export default function CountyMap({
           paint: { "background-color": "#e8f0f8" },
         }],
       },
-      bounds: [[-130, 22], [-62, 52]],
-      fitBoundsOptions: { padding: 20 },
+      bounds: US_BOUNDS,
+      fitBoundsOptions: { padding: fitPadding(window.matchMedia("(max-width: 639px)").matches) },
       minZoom: 2,
       maxZoom: 10,
       attributionControl: false,
@@ -389,6 +397,16 @@ export default function CountyMap({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // useIsMobile resolves after mount, so the map is built at the desktop size
+  // and the container then changes shape. Re-fit once that settles (and on
+  // rotation), unless the user has drilled into a state.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || loading || selectedState) return;
+    m.resize();
+    m.fitBounds(US_BOUNDS, { padding: fitPadding(isMobile), duration: 0 });
+  }, [isMobile, loading, selectedState]);
+
   // Repaint both fill layers when the metric changes
   useEffect(() => {
     const m = map.current;
@@ -440,7 +458,7 @@ export default function CountyMap({
 
     if (!selectedState) {
       // Zoom back out
-      m.fitBounds([[-130, 22], [-62, 52]], { padding: 20, duration: 800 });
+      m.fitBounds(US_BOUNDS, { padding: fitPadding(isMobileRef.current), duration: 800 });
       setLevel("state");
       try { m.setPaintProperty("state-borders", "line-width", 1); } catch {}
       return;
@@ -537,7 +555,16 @@ export default function CountyMap({
         </div>
       )}
       <div style={{ position: "relative" }}>
-        <div ref={mapContainer} style={{ width: "100%", height: isMobile ? 280 : 400, borderRadius: 4 }} />
+        <div
+          ref={mapContainer}
+          style={{
+            width: "100%",
+            ...(isMobile
+              ? { aspectRatio: `${US_ASPECT.toFixed(3)} / 1`, maxHeight: 300 }
+              : { height: 400 }),
+            borderRadius: 4,
+          }}
+        />
 
         {/* Show/hide panel button */}
         {selectedState && countyData.length > 0 && !showPanel && (

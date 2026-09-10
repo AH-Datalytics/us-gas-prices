@@ -12,6 +12,7 @@ const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: ()
 import type { GasPriceRow, SteoRow, AaaStateRow, CpiRow, AaaStateChangeRow, ChangeDates } from "@/lib/queries";
 import type { MapMetric } from "./CountyMap";
 import { fmtDollars, fmtMonth } from "@/lib/utils";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 interface Props {
   nationalRegular: GasPriceRow[];
@@ -130,6 +131,11 @@ export default function GasPricesClient({
   const [mapView, setMapView] = useState<{ level: "state" | "county"; metric: MapMetric; asOf: string }>({
     level: "state", metric: "price", asOf: "",
   });
+  const isMobile = useIsMobile();
+  // Angled date labels need roughly 90px each. Asking for 8 on a phone makes
+  // recharts silently drop whichever ones collide, which leaves the survivors
+  // unevenly spaced (a missing Jun 2026 between Mar and Sep).
+  const tickTarget = isMobile ? 4 : 8;
 
   const now = new Date();
   const defaultStart = `${now.getFullYear() - 2}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -350,7 +356,7 @@ export default function GasPricesClient({
                       const seen = new Set<string>();
                       const ticks: string[] = [];
                       const totalYears = totalMonths / 12;
-                      const yearStep = Math.max(1, Math.round(totalYears / 8));
+                      const yearStep = Math.max(1, Math.round(totalYears / tickTarget));
                       for (const d of chartData) {
                         const yr = d.period.slice(0, 4);
                         const mo = d.period.slice(5, 7);
@@ -361,7 +367,7 @@ export default function GasPricesClient({
                       }
                       return ticks;
                     }
-                    const step = Math.max(1, Math.round(totalMonths / 8));
+                    const step = Math.max(1, Math.round(totalMonths / tickTarget));
                     const seen = new Set<string>();
                     const ticks: string[] = [];
                     for (const d of chartData) {
