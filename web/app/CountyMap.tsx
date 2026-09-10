@@ -18,8 +18,36 @@ interface CountyPrice {
 /** Which value the choropleth is painting. Keys match the GeoJSON properties. */
 export type MapMetric = "price" | "chg7" | "chg28";
 
-/** Blue (low / falling) through cream (mid / unchanged) to red (high / rising). */
-const RAMP = ["#2d5f8a", "#6a9bc4", "#f5f0e8", "#d4826a", "#a03030"];
+/**
+ * Price is magnitude with no meaningful midpoint, so it gets a sequential
+ * single-hue ramp, light to dark. A diverging ramp here would centre "neutral"
+ * on the median of the day's prices, which paints half the map cool no matter
+ * what prices actually did.
+ */
+const PRICE_RAMP = ["#f9ddd3", "#eec0ae", "#e2a288", "#d17f63", "#bd5c42", "#a43a2c", "#841e1e"];
+
+/**
+ * Fixed dollar breaks, not percentiles. A percentile scale repaints a county
+ * when *other* counties move, so the same colour means a different price from
+ * one day to the next and state and county levels are not comparable. Fixed
+ * breaks mean a colour always denotes the same price, and the legend can carry
+ * real dollar labels.
+ *
+ * They are unevenly spaced on purpose: half of all counties sit between $3.75
+ * and $4.00, so evenly spaced breaks wide enough to reach $6 flatten that half
+ * into a single shade. These are tight where the counties are and wide across
+ * the sparse expensive tail.
+ */
+const PRICE_STOPS = [3.5, 3.7, 3.85, 4.0, 4.25, 5.0, 6.0];
+
+/**
+ * Change has a true zero, so it gets two hues around a neutral midpoint:
+ * blue (falling) through cream (unchanged) to red (rising). The midpoint is
+ * the card's own background, so a county that barely moved fades into the page.
+ */
+const CHANGE_RAMP = ["#2d5f8a", "#6a9bc4", "#f5f0e8", "#d4826a", "#a03030"];
+
+const rampFor = (metric: MapMetric) => (metric === "price" ? PRICE_RAMP : CHANGE_RAMP);
 
 /** Format a dollar change as cents: 0.032 -> "+3.2c". */
 function fmtCents(d: number | null | undefined): string {
@@ -49,9 +77,9 @@ function ensureAscending(stops: number[]): number[] {
 
 interface Scale { stops: number[]; bound: number }
 
-function priceScale(values: number[]): Scale {
-  const s = [...values].sort((a, b) => a - b);
-  return { stops: ensureAscending([pct(s, 0.1), pct(s, 0.3), pct(s, 0.5), pct(s, 0.7), pct(s, 0.9)]), bound: 0 };
+/** Price uses fixed dollar breaks, so it ignores the data it is handed. */
+function priceScale(): Scale {
+  return { stops: PRICE_STOPS, bound: 0 };
 }
 
 /**
@@ -66,12 +94,14 @@ function changeScale(values: number[]): Scale {
 }
 
 function colorExpr(metric: MapMetric, stops: number[]): maplibregl.ExpressionSpecification {
+  const ramp = rampFor(metric);
+  // Ramps differ in length (7 sequential steps, 5 diverging), so zip rather
+  // than spelling the pairs out.
+  const pairs = stops.flatMap((stop, i) => [stop, ramp[i]]);
   return [
     "case",
     ["==", ["get", metric], null], "#ffffff",
-    ["interpolate", ["linear"], ["get", metric],
-      stops[0], RAMP[0], stops[1], RAMP[1], stops[2], RAMP[2], stops[3], RAMP[3], stops[4], RAMP[4],
-    ],
+    ["interpolate", ["linear"], ["get", metric], ...pairs],
   ] as maplibregl.ExpressionSpecification;
 }
 
@@ -80,7 +110,7 @@ type LevelScales = Record<MapMetric, Scale>;
 function buildScales(rows: { price: number | null; chg7: number | null; chg28: number | null }[]): LevelScales {
   const nn = (xs: (number | null)[]) => xs.filter((v): v is number => v != null);
   return {
-    price: priceScale(nn(rows.map((r) => r.price))),
+    price: priceScale(),
     chg7: changeScale(nn(rows.map((r) => r.chg7))),
     chg28: changeScale(nn(rows.map((r) => r.chg28))),
   };
@@ -594,8 +624,10 @@ export default function CountyMap({
         const scale = scalesRef.current?.[level]?.[metric];
         const isChange = metric !== "price";
         const bound = scale?.bound ?? 0;
-        const lo = isChange ? fmtCents(-bound) : "Lower";
-        const hi = isChange ? fmtCents(bound) : "Higher";
+        // Fixed price breaks mean the legend can name real dollars rather
+        // than a relative "Lower / Higher".
+        const lo = isChange ? fmtCents(-bound) : `$${PRICE_STOPS[0].toFixed(2)}`;
+        const hi = isChange ? fmtCents(bound) : `$${PRICE_STOPS[PRICE_STOPS.length - 1].toFixed(2)}+`;
         const compared = isChange
           ? (metric === "chg7" ? activeDates?.d7 : activeDates?.d28)
           : null;
@@ -604,10 +636,10 @@ export default function CountyMap({
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{lo}</span>
             <div style={{
               width: isMobile ? 100 : 140, height: 8, borderRadius: 4,
-              background: `linear-gradient(to right, ${RAMP.join(", ")})`,
+              background: `linear-gradient(to right, ${rampFor(metric).join(", ")})`,
             }} />
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{hi}</span>
-            {isChange && <span>per gallon</span>}
+            <span>per gallon</span>
             <span style={{ marginLeft: 8, color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
             <span>No data</span>
             {isChange && compared && activeDates?.anchor && (
