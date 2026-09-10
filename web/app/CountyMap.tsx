@@ -4,13 +4,86 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { fmtDollars } from "@/lib/utils";
-import type { AaaStateRow } from "@/lib/queries";
+import type { AaaStateRow, AaaStateChangeRow, ChangeDates } from "@/lib/queries";
 
 interface CountyPrice {
   state: string;
   stateFips: string;
   county: string;
   price: number;
+  chg7: number | null;
+  chg28: number | null;
+}
+
+/** Which value the choropleth is painting. Keys match the GeoJSON properties. */
+export type MapMetric = "price" | "chg7" | "chg28";
+
+/** Blue (low / falling) through cream (mid / unchanged) to red (high / rising). */
+const RAMP = ["#2d5f8a", "#6a9bc4", "#f5f0e8", "#d4826a", "#a03030"];
+
+/** Format a dollar change as cents: 0.032 -> "+3.2c". */
+function fmtCents(d: number | null | undefined): string {
+  if (d == null) return "—";
+  const cents = d * 100;
+  const sign = cents > 0 ? "+" : cents < 0 ? "-" : "";
+  return `${sign}${Math.abs(cents).toFixed(1)}¢`;
+}
+
+function pct(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+}
+
+/**
+ * MapLibre's `interpolate` throws on stops that are not strictly ascending,
+ * which ties in the data can easily produce (many counties at one price, or a
+ * flat week where most changes are 0).
+ */
+function ensureAscending(stops: number[]): number[] {
+  const out = [...stops];
+  for (let i = 1; i < out.length; i++) {
+    if (out[i] <= out[i - 1]) out[i] = out[i - 1] + 1e-4;
+  }
+  return out;
+}
+
+interface Scale { stops: number[]; bound: number }
+
+function priceScale(values: number[]): Scale {
+  const s = [...values].sort((a, b) => a - b);
+  return { stops: ensureAscending([pct(s, 0.1), pct(s, 0.3), pct(s, 0.5), pct(s, 0.7), pct(s, 0.9)]), bound: 0 };
+}
+
+/**
+ * Diverging scale centred on zero. The domain is symmetric so that a 3c rise
+ * and a 3c fall read as equally intense; an asymmetric domain would make a
+ * week where everything moved one way look far more extreme than it was.
+ */
+function changeScale(values: number[]): Scale {
+  const abs = values.map(Math.abs).sort((a, b) => a - b);
+  const bound = Math.max(pct(abs, 0.95), 0.01); // floor at 1c so a flat week still renders
+  return { stops: ensureAscending([-bound, -bound / 2, 0, bound / 2, bound]), bound };
+}
+
+function colorExpr(metric: MapMetric, stops: number[]): maplibregl.ExpressionSpecification {
+  return [
+    "case",
+    ["==", ["get", metric], null], "#ffffff",
+    ["interpolate", ["linear"], ["get", metric],
+      stops[0], RAMP[0], stops[1], RAMP[1], stops[2], RAMP[2], stops[3], RAMP[3], stops[4], RAMP[4],
+    ],
+  ] as maplibregl.ExpressionSpecification;
+}
+
+type LevelScales = Record<MapMetric, Scale>;
+
+function buildScales(rows: { price: number | null; chg7: number | null; chg28: number | null }[]): LevelScales {
+  const nn = (xs: (number | null)[]) => xs.filter((v): v is number => v != null);
+  return {
+    price: priceScale(nn(rows.map((r) => r.price))),
+    chg7: changeScale(nn(rows.map((r) => r.chg7))),
+    chg28: changeScale(nn(rows.map((r) => r.chg28))),
+  };
 }
 
 const STATE_FIPS: Record<string, string> = {
@@ -34,6 +107,10 @@ interface CountyMapProps {
   selectedState?: string;
   countyData?: CountyInfo[];
   nationalAvg?: number;
+  stateChanges?: AaaStateChangeRow[];
+  stateDates?: ChangeDates;
+  /** Lets the card caption follow what the map is actually showing. */
+  onViewChange?: (view: { level: "state" | "county"; metric: MapMetric; asOf: string }) => void;
 }
 
 function useIsMobile() {
@@ -48,20 +125,36 @@ function useIsMobile() {
   return isMobile;
 }
 
-export default function CountyMap({ aaaStates, onStateClick, selectedState, countyData = [], nationalAvg = 0 }: CountyMapProps) {
+export default function CountyMap({
+  aaaStates, onStateClick, selectedState, countyData = [], nationalAvg = 0,
+  stateChanges = [], stateDates, onViewChange,
+}: CountyMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const countyGeoRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const [loading, setLoading] = useState(true);
   const [level, setLevel] = useState<"state" | "county">("state");
+  const [metric, setMetric] = useState<MapMetric>("price");
+  const [countyDates, setCountyDates] = useState<ChangeDates | null>(null);
   const [showPanel, setShowPanel] = useState(true);
   const isMobile = useIsMobile();
   const levelRef = useRef(level);
   levelRef.current = level;
+  const metricRef = useRef(metric);
+  metricRef.current = metric;
+  const scalesRef = useRef<{ state: LevelScales; county: LevelScales } | null>(null);
   const aaaStatesRef = useRef(aaaStates);
   aaaStatesRef.current = aaaStates;
+  const stateChangesRef = useRef(stateChanges);
+  stateChangesRef.current = stateChanges;
   const onStateClickRef = useRef(onStateClick);
   onStateClickRef.current = onStateClick;
+
+  // Which snapshot dates back the active level, so labels can be honest about
+  // counties being a few days behind states.
+  const activeDates = level === "county" ? countyDates : stateDates;
+  const has7 = !!activeDates?.d7;
+  const has28 = !!activeDates?.d28;
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -95,22 +188,28 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
       const statesRes = await fetch("/us-states.json");
       const statesGeo = await statesRes.json();
 
-      // Inject state prices
+      // Inject state prices and changes, keyed by state name
+      const changeByName = new Map(stateChangesRef.current.map((s) => [s.state_name, s]));
       const statePriceMap = new Map<string, number>();
       for (const s of aaaStatesRef.current) {
         statePriceMap.set(s.state_name, s.regular ?? 0);
       }
-      const statePrices = aaaStatesRef.current.filter((s) => s.regular != null).map((s) => s.regular!).sort((a, b) => a - b);
-      const sp10 = statePrices[Math.floor(statePrices.length * 0.1)] || 0;
-      const sp30 = statePrices[Math.floor(statePrices.length * 0.3)] || 0;
-      const sp50 = statePrices[Math.floor(statePrices.length * 0.5)] || 0;
-      const sp70 = statePrices[Math.floor(statePrices.length * 0.7)] || 0;
-      const sp90 = statePrices[Math.floor(statePrices.length * 0.9)] || 0;
 
       for (const feat of statesGeo.features) {
         const name = feat.properties.name;
+        const chg = changeByName.get(name);
         feat.properties.price = statePriceMap.get(name) ?? null;
+        feat.properties.chg7 = chg?.chg7 ?? null;
+        feat.properties.chg28 = chg?.chg28 ?? null;
       }
+
+      const stateScales = buildScales(
+        statesGeo.features.map((f: GeoJSON.Feature) => ({
+          price: (f.properties?.price ?? null) as number | null,
+          chg7: (f.properties?.chg7 ?? null) as number | null,
+          chg28: (f.properties?.chg28 ?? null) as number | null,
+        }))
+      );
 
       m.addSource("states", { type: "geojson", data: statesGeo });
 
@@ -120,13 +219,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
         type: "fill",
         source: "states",
         paint: {
-          "fill-color": [
-            "case",
-            ["==", ["get", "price"], null], "#ffffff",
-            ["interpolate", ["linear"], ["get", "price"],
-              sp10, "#2d5f8a", sp30, "#6a9bc4", sp50, "#f5f0e8", sp70, "#d4826a", sp90, "#a03030",
-            ],
-          ],
+          "fill-color": colorExpr(metricRef.current, stateScales[metricRef.current].stops),
           "fill-opacity": 0.85,
         },
         layout: { visibility: "visible" },
@@ -145,29 +238,32 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
       const geojson = await geoRes.json();
 
       const priceRes = await fetch("/api/gas-counties");
-      const { counties } = await priceRes.json() as { counties: CountyPrice[] };
+      const { counties, dates: cDates } = await priceRes.json() as { counties: CountyPrice[]; dates: ChangeDates };
+      setCountyDates(cDates);
 
       const normalize = (s: string) => s.toLowerCase().replace(/saint /g, "st. ").replace(/de /g, "de");
-      const priceLookup = new Map<string, number>();
+      const priceLookup = new Map<string, CountyPrice>();
       for (const c of counties) {
-        priceLookup.set(`${c.stateFips}_${normalize(c.county)}`, c.price);
+        priceLookup.set(`${c.stateFips}_${normalize(c.county)}`, c);
       }
 
-      const countyPrices: number[] = [];
       for (const feat of geojson.features) {
         const stateFips = feat.properties.STATE;
         const countyName = normalize(feat.properties.NAME);
-        const price = priceLookup.get(`${stateFips}_${countyName}`);
-        feat.properties.price = price ?? null;
-        if (price != null) countyPrices.push(price);
+        const hit = priceLookup.get(`${stateFips}_${countyName}`);
+        feat.properties.price = hit?.price ?? null;
+        feat.properties.chg7 = hit?.chg7 ?? null;
+        feat.properties.chg28 = hit?.chg28 ?? null;
       }
-      countyPrices.sort((a, b) => a - b);
 
-      const cp10 = countyPrices[Math.floor(countyPrices.length * 0.1)] || 0;
-      const cp30 = countyPrices[Math.floor(countyPrices.length * 0.3)] || 0;
-      const cp50 = countyPrices[Math.floor(countyPrices.length * 0.5)] || 0;
-      const cp70 = countyPrices[Math.floor(countyPrices.length * 0.7)] || 0;
-      const cp90 = countyPrices[Math.floor(countyPrices.length * 0.9)] || 0;
+      const countyScales = buildScales(
+        geojson.features.map((f: GeoJSON.Feature) => ({
+          price: (f.properties?.price ?? null) as number | null,
+          chg7: (f.properties?.chg7 ?? null) as number | null,
+          chg28: (f.properties?.chg28 ?? null) as number | null,
+        }))
+      );
+      scalesRef.current = { state: stateScales, county: countyScales };
 
       countyGeoRef.current = geojson;
       m.addSource("counties", { type: "geojson", data: geojson });
@@ -178,13 +274,7 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
         type: "fill",
         source: "counties",
         paint: {
-          "fill-color": [
-            "case",
-            ["==", ["get", "price"], null], "#ffffff",
-            ["interpolate", ["linear"], ["get", "price"],
-              cp10, "#2d5f8a", cp30, "#6a9bc4", cp50, "#f5f0e8", cp70, "#d4826a", cp90, "#a03030",
-            ],
-          ],
+          "fill-color": colorExpr(metricRef.current, countyScales[metricRef.current].stops),
           "fill-opacity": 0.85,
         },
         layout: { visibility: "none" },
@@ -205,12 +295,26 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
       // ─── Tooltip ───
       const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
 
+      // The absolute price stays in the tooltip in every mode, so a change
+      // view never leaves you guessing what the underlying price is.
+      const tooltipHTML = (name: string, props: Record<string, unknown> | null) => {
+        const price = props?.price as number | null | undefined;
+        if (price == null) return `<strong>${name}</strong><br/>No data`;
+        const lines = [`${fmtDollars(price)}/gal`];
+        const m7 = metricRef.current;
+        if (m7 !== "price") {
+          const chg = props?.[m7] as number | null | undefined;
+          const label = m7 === "chg7" ? "7-day" : "28-day";
+          lines.unshift(`<strong>${fmtCents(chg)}</strong> ${label}`);
+        }
+        return `<strong>${name}</strong><br/>${lines.join("<br/>")}`;
+      };
+
       m.on("mousemove", "county-fill", (e) => {
         if (levelRef.current !== "county" || !e.features?.length) return;
         const feat = e.features[0];
-        const price = feat.properties?.price;
         popup.setLngLat(e.lngLat)
-          .setHTML(`<strong>${feat.properties?.NAME || ""}</strong><br/>${price != null ? fmtDollars(price) + "/gal" : "No data"}`)
+          .setHTML(tooltipHTML(String(feat.properties?.NAME || ""), feat.properties))
           .addTo(m);
         m.getCanvas().style.cursor = "pointer";
       });
@@ -218,9 +322,8 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
       m.on("mousemove", "state-fill", (e) => {
         if (levelRef.current !== "state" || !e.features?.length) return;
         const feat = e.features[0];
-        const price = feat.properties?.price;
         popup.setLngLat(e.lngLat)
-          .setHTML(`<strong>${feat.properties?.name || ""}</strong><br/>${price != null ? fmtDollars(price) + "/gal" : "No data"}`)
+          .setHTML(tooltipHTML(String(feat.properties?.name || ""), feat.properties))
           .addTo(m);
         m.getCanvas().style.cursor = "pointer";
       });
@@ -252,6 +355,30 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
     return () => { m.remove(); map.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Repaint both fill layers when the metric changes
+  useEffect(() => {
+    const m = map.current;
+    const sc = scalesRef.current;
+    if (!m || loading || !sc) return;
+    try {
+      m.setPaintProperty("state-fill", "fill-color", colorExpr(metric, sc.state[metric].stops));
+      m.setPaintProperty("county-fill", "fill-color", colorExpr(metric, sc.county[metric].stops));
+    } catch {
+      // layers may not exist yet
+    }
+  }, [metric, loading]);
+
+  // A change view is only offered where a comparison snapshot exists; if the
+  // active level loses one (county data is weekly), fall back to price.
+  useEffect(() => {
+    if (loading) return;
+    if ((metric === "chg7" && !has7) || (metric === "chg28" && !has28)) setMetric("price");
+  }, [metric, has7, has28, loading]);
+
+  useEffect(() => {
+    onViewChange?.({ level, metric, asOf: activeDates?.anchor ?? "" });
+  }, [level, metric, activeDates?.anchor, onViewChange]);
 
   // Toggle layer visibility when level changes
   useEffect(() => {
@@ -341,13 +468,33 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
             Back to US
           </button>
         ) : <div />}
-        <div className="scope-toggle">
-          <button className={`scope-btn ${level === "state" ? "active" : ""}`} onClick={() => setLevel("state")}>
-            State
-          </button>
-          <button className={`scope-btn ${level === "county" ? "active" : ""}`} onClick={() => setLevel("county")}>
-            County
-          </button>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <div className="scope-toggle">
+            {([
+              { v: "price", label: "Current Price", on: true },
+              { v: "chg7", label: "7-Day", on: has7 },
+              { v: "chg28", label: "28-Day", on: has28 },
+            ] as const).map((o) => (
+              <button
+                key={o.v}
+                className={`scope-btn ${metric === o.v ? "active" : ""}`}
+                onClick={() => o.on && setMetric(o.v)}
+                disabled={!o.on}
+                title={o.on ? undefined : "No comparison snapshot stored for this view"}
+                style={o.on ? undefined : { opacity: 0.4, cursor: "not-allowed" }}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div className="scope-toggle">
+            <button className={`scope-btn ${level === "state" ? "active" : ""}`} onClick={() => setLevel("state")}>
+              State
+            </button>
+            <button className={`scope-btn ${level === "county" ? "active" : ""}`} onClick={() => setLevel("county")}>
+              County
+            </button>
+          </div>
         </div>
       </div>
 
@@ -439,17 +586,33 @@ export default function CountyMap({ aaaStates, onStateClick, selectedState, coun
           );
         })()}
       </div>
-      {/* Legend */}
-      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
-        <span>Lower</span>
-        <div style={{
-          width: isMobile ? 100 : 140, height: 8, borderRadius: 4,
-          background: "linear-gradient(to right, #2d5f8a, #6a9bc4, #f5f0e8, #d4826a, #a03030)",
-        }} />
-        <span>Higher</span>
-        <span style={{ marginLeft: 8, color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
-        <span>No data</span>
-      </div>
+      {/* Legend — endpoints follow the active scale */}
+      {(() => {
+        const scale = scalesRef.current?.[level]?.[metric];
+        const isChange = metric !== "price";
+        const bound = scale?.bound ?? 0;
+        const lo = isChange ? fmtCents(-bound) : "Lower";
+        const hi = isChange ? fmtCents(bound) : "Higher";
+        const compared = isChange
+          ? (metric === "chg7" ? activeDates?.d7 : activeDates?.d28)
+          : null;
+        return (
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{lo}</span>
+            <div style={{
+              width: isMobile ? 100 : 140, height: 8, borderRadius: 4,
+              background: `linear-gradient(to right, ${RAMP.join(", ")})`,
+            }} />
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{hi}</span>
+            {isChange && <span>per gallon</span>}
+            <span style={{ marginLeft: 8, color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
+            <span>No data</span>
+            {isChange && compared && activeDates?.anchor && (
+              <span style={{ marginLeft: "auto" }}>{compared} to {activeDates.anchor}</span>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

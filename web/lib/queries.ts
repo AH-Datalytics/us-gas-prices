@@ -204,6 +204,89 @@ export function getAaaCountyPrices(state: string): AaaCountyRow[] {
   ).all(state, state) as AaaCountyRow[];
 }
 
+// ─── Price change over time ──────────────
+
+/**
+ * Which snapshots a change view is comparing. `d7`/`d28` are null when the
+ * series has no usable partner snapshot, in which case that view is not
+ * offered.
+ */
+export interface ChangeDates {
+  anchor: string;
+  d7: string | null;
+  d28: string | null;
+}
+
+type PriceTable = "aaa_state_prices" | "aaa_county_prices";
+
+function shiftDays(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Snapshot nearest to `target`, or null if nothing lands within `tolerance`
+ * days of it. Counties are only scraped weekly, so an exact -7/-28 hit is not
+ * guaranteed forever; anything further off than the tolerance would be
+ * mislabelled by the button, so it is refused instead.
+ *
+ * Never returns the anchor itself — comparing a snapshot to itself would
+ * render a uniformly zero map that looks like real data.
+ */
+function nearestSnapshot(
+  table: PriceTable,
+  target: string,
+  anchor: string,
+  tolerance: number
+): string | null {
+  const row = cachedPrepare(
+    `SELECT date FROM (SELECT DISTINCT date FROM ${table})
+     WHERE date < ? AND ABS(julianday(date) - julianday(?)) <= ?
+     ORDER BY ABS(julianday(date) - julianday(?)) LIMIT 1`
+  ).get(anchor, target, tolerance, target) as { date: string } | undefined;
+  return row?.date ?? null;
+}
+
+/** Anchor snapshot plus the best 7- and 28-day comparison partners. */
+export function getChangeDates(table: PriceTable): ChangeDates {
+  const anchorRow = cachedPrepare(
+    `SELECT MAX(date) AS date FROM ${table}`
+  ).get() as { date: string | null };
+  const anchor = anchorRow?.date ?? "";
+  if (!anchor) return { anchor: "", d7: null, d28: null };
+  return {
+    anchor,
+    d7: nearestSnapshot(table, shiftDays(anchor, 7), anchor, 3),
+    d28: nearestSnapshot(table, shiftDays(anchor, 28), anchor, 5),
+  };
+}
+
+export interface AaaStateChangeRow {
+  state: string;
+  state_name: string;
+  price: number | null;
+  chg7: number | null;
+  chg28: number | null;
+}
+
+/** Latest state prices with their 7- and 28-day changes, in dollars. */
+export function getAaaStateChanges(): { rows: AaaStateChangeRow[]; dates: ChangeDates } {
+  const dates = getChangeDates("aaa_state_prices");
+  if (!dates.anchor) return { rows: [], dates };
+  const rows = cachedPrepare(
+    `SELECT a.state, a.state_name, a.regular AS price,
+            a.regular - w.regular AS chg7,
+            a.regular - m.regular AS chg28
+     FROM aaa_state_prices a
+     LEFT JOIN aaa_state_prices w ON w.state = a.state AND w.date = ?
+     LEFT JOIN aaa_state_prices m ON m.state = a.state AND m.date = ?
+     WHERE a.date = ?
+     ORDER BY a.regular DESC`
+  ).all(dates.d7 ?? "", dates.d28 ?? "", dates.anchor) as AaaStateChangeRow[];
+  return { rows, dates };
+}
+
 // ─── CPI (BLS) ───────────────────────────
 
 export interface CpiRow {

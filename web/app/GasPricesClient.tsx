@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import {
   ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
@@ -9,7 +9,8 @@ import ScopeToggle from "@/components/ScopeToggle";
 import { US_STATES } from "@/lib/constants";
 
 const CountyMap = dynamic(() => import("./CountyMap"), { ssr: false, loading: () => <div style={{ height: 400, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--blue-mid)", fontSize: 12 }}>Loading map...</div> });
-import type { GasPriceRow, SteoRow, AaaStateRow, CpiRow } from "@/lib/queries";
+import type { GasPriceRow, SteoRow, AaaStateRow, CpiRow, AaaStateChangeRow, ChangeDates } from "@/lib/queries";
+import type { MapMetric } from "./CountyMap";
 import { fmtDollars, fmtMonth } from "@/lib/utils";
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   steoDiesel: SteoRow[];
   aaaStates: AaaStateRow[];
   cpi: CpiRow[];
+  stateChanges: AaaStateChangeRow[];
+  stateDates: ChangeDates;
 }
 
 // Base period for real-dollar conversion. Prices in "adjusted" mode are
@@ -160,6 +163,7 @@ function fmtAxisLabel(v: string, yearOnly: boolean): string {
 
 export default function GasPricesClient({
   nationalRegular, nationalDiesel, steoGas, steoDiesel, aaaStates, cpi,
+  stateChanges, stateDates,
 }: Props) {
   const [fuel, setFuel] = useState<"regular_gas" | "diesel">("regular_gas");
   const [showForecast, setShowForecast] = useState(false);
@@ -168,6 +172,9 @@ export default function GasPricesClient({
   const [countyData, setCountyData] = useState<{ county: string; price: number }[]>([]);
   const [countyLoading, setCountyLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [mapView, setMapView] = useState<{ level: "state" | "county"; metric: MapMetric; asOf: string }>({
+    level: "state", metric: "price", asOf: "",
+  });
 
   const now = new Date();
   const defaultStart = `${now.getFullYear() - 2}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -262,6 +269,22 @@ export default function GasPricesClient({
   const countyHigh = countyData.length > 0 ? countyData[0] : null; // already sorted desc from API
   const countyLow = countyData.length > 0 ? countyData[countyData.length - 1] : null;
 
+  // Stable identity: CountyMap calls this from an effect, so a fresh function
+  // each render would loop.
+  const handleMapView = useCallback(
+    (v: { level: "state" | "county"; metric: MapMetric; asOf: string }) => setMapView(v),
+    []
+  );
+
+  // County prices are scraped weekly and state prices daily, so the two levels
+  // are as of different dates. The caption follows whichever is on screen.
+  const mapCaption = mapView.metric === "chg7"
+    ? "Change over the last 7 days"
+    : mapView.metric === "chg28"
+    ? "Change over the last 28 days"
+    : "Tap a state for county breakdown";
+  const mapAsOf = mapView.asOf || aaaStates[0]?.date || "";
+
   const exportBtnClass = "text-[10px] text-[var(--blue-mid)] hover:text-[var(--blue-main)] underline decoration-dotted underline-offset-2 cursor-pointer transition-colors";
 
   return (
@@ -274,7 +297,7 @@ export default function GasPricesClient({
           <div className="flex items-center justify-between mb-1">
             <div>
               <h2 style={{ marginBottom: 0, fontSize: 15 }}>US Gas Prices</h2>
-              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>Tap a state for county breakdown &middot; Updated {aaaStates[0]?.date || ""}</div>
+              <div className="subtitle" style={{ marginBottom: 2, fontSize: 10 }}>{mapCaption}. {mapView.level === "county" ? "Counties" : "States"} as of {mapAsOf}</div>
             </div>
             <div className="flex items-center gap-3">
               <button className={exportBtnClass} onClick={() => {
@@ -287,7 +310,7 @@ export default function GasPricesClient({
               {/* <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, selectedState ? `gas-prices-${selectedState}.jpg` : "gas-prices-map.jpg", true)}>JPEG</button> */}
             </div>
           </div>
-          <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} selectedState={selectedState} countyData={countyData} nationalAvg={natAvg} />
+          <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} selectedState={selectedState} countyData={countyData} nationalAvg={natAvg} stateChanges={stateChanges} stateDates={stateDates} onViewChange={handleMapView} />
           <div className="flex items-center justify-between" style={{ marginTop: 4 }}>
             <div className="source">Source: <a href="https://gasprices.aaa.com" target="_blank" rel="noopener noreferrer">AAA Fuel Prices</a></div>
             <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
