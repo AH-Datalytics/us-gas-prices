@@ -177,8 +177,11 @@ export default function CountyMap({
       minZoom: 2,
       maxZoom: 10,
       attributionControl: false,
-      // @ts-expect-error — preserveDrawingBuffer needed for JPEG export
-      preserveDrawingBuffer: true,
+      // Required for JPEG export: without it the WebGL drawing buffer is
+      // discarded after each frame and toDataURL returns a blank image.
+      // maplibre-gl v5 moved this out of the top-level options, where it was
+      // silently ignored.
+      canvasContextAttributes: { preserveDrawingBuffer: true },
     });
 
     map.current = m;

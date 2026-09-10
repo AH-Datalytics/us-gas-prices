@@ -94,58 +94,13 @@ function downloadCountyCsv(counties: { county: string; price: number }[], stateN
   URL.revokeObjectURL(url);
 }
 
-async function downloadJpeg(el: HTMLElement | null, filename: string, hasMap = false) {
+/**
+ * Capture a card as a JPEG. Works for the map too: html-to-image serialises a
+ * WebGL canvas through toDataURL, which needs the map's drawing buffer to be
+ * preserved (see canvasContextAttributes in CountyMap).
+ */
+async function downloadJpeg(el: HTMLElement | null, filename: string) {
   if (!el) return;
-
-  if (hasMap) {
-    // For map cards: render the map canvas to an image first, then capture
-    const mapCanvas = el.querySelector("canvas") as HTMLCanvasElement | null;
-    if (mapCanvas) {
-      // Force a synchronous re-render of the WebGL canvas
-      const gl = mapCanvas.getContext("webgl2") || mapCanvas.getContext("webgl");
-      if (gl) {
-        // Read pixels to force the buffer
-        const w = mapCanvas.width;
-        const h = mapCanvas.height;
-        const pixels = new Uint8Array(w * h * 4);
-        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-        // Create a 2D canvas with the pixel data (flipped vertically)
-        const c2d = document.createElement("canvas");
-        c2d.width = w;
-        c2d.height = h;
-        const ctx = c2d.getContext("2d")!;
-        const imageData = ctx.createImageData(w, h);
-        // WebGL reads bottom-to-top, flip it
-        for (let y = 0; y < h; y++) {
-          const srcRow = (h - 1 - y) * w * 4;
-          const dstRow = y * w * 4;
-          imageData.data.set(pixels.subarray(srcRow, srcRow + w * 4), dstRow);
-        }
-        ctx.putImageData(imageData, 0, 0);
-
-        // Replace the WebGL canvas with a temp image
-        const img = document.createElement("img");
-        img.src = c2d.toDataURL("image/png");
-        img.style.cssText = window.getComputedStyle(mapCanvas).cssText;
-        img.style.position = "absolute";
-        img.style.width = mapCanvas.clientWidth + "px";
-        img.style.height = mapCanvas.clientHeight + "px";
-        mapCanvas.style.display = "none";
-        mapCanvas.parentElement?.appendChild(img);
-
-        const { toJpeg } = await import("html-to-image");
-        const url = await toJpeg(el, { backgroundColor: "#F5F0E8", pixelRatio: 2, quality: 0.95 });
-
-        img.remove();
-        mapCanvas.style.display = "";
-
-        const a = document.createElement("a");
-        a.href = url; a.download = filename; a.click();
-        return;
-      }
-    }
-  }
 
   const { toJpeg } = await import("html-to-image");
   const url = await toJpeg(el, { backgroundColor: "#F5F0E8", pixelRatio: 2, quality: 0.95 });
@@ -307,7 +262,7 @@ export default function GasPricesClient({
                   downloadStateCsv(sortedStates, "gas-prices-by-state.csv");
                 }
               }}>CSV</button>
-              {/* <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, selectedState ? `gas-prices-${selectedState}.jpg` : "gas-prices-map.jpg", true)}>JPEG</button> */}
+              <button className={exportBtnClass} onClick={() => downloadJpeg(mapRef.current, selectedState ? `gas-prices-${selectedState}.jpg` : "gas-prices-map.jpg")}>JPEG</button>
             </div>
           </div>
           <CountyMap aaaStates={aaaStates} onStateClick={setSelectedState} selectedState={selectedState} countyData={countyData} nationalAvg={natAvg} stateChanges={stateChanges} stateDates={stateDates} onViewChange={handleMapView} />
