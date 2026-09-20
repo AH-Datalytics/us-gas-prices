@@ -76,11 +76,16 @@ function ensureAscending(stops: number[]): number[] {
   return out;
 }
 
-interface Scale { stops: number[]; bound: number }
+/**
+ * `lo`/`hi` are the extremes actually present in the data, which a clipped
+ * ramp never reaches. The legend quotes them so the ends of the ramp are not
+ * mistaken for the largest moves.
+ */
+interface Scale { stops: number[]; bound: number; lo: number; hi: number }
 
 /** Price uses fixed dollar breaks, so it ignores the data it is handed. */
 function priceScale(): Scale {
-  return { stops: PRICE_STOPS, bound: 0 };
+  return { stops: PRICE_STOPS, bound: 0, lo: 0, hi: 0 };
 }
 
 /**
@@ -91,7 +96,12 @@ function priceScale(): Scale {
 function changeScale(values: number[]): Scale {
   const abs = values.map(Math.abs).sort((a, b) => a - b);
   const bound = Math.max(pct(abs, 0.95), 0.01); // floor at 1c so a flat week still renders
-  return { stops: ensureAscending([-bound, -bound / 2, 0, bound / 2, bound]), bound };
+  return {
+    stops: ensureAscending([-bound, -bound / 2, 0, bound / 2, bound]),
+    bound,
+    lo: values.length ? Math.min(...values) : 0,
+    hi: values.length ? Math.max(...values) : 0,
+  };
 }
 
 function colorExpr(metric: MapMetric, stops: number[]): maplibregl.ExpressionSpecification {
@@ -351,7 +361,11 @@ export default function CountyMap({
         return `<strong>${name}</strong><br/>${lines.join("<br/>")}`;
       };
 
+      // Hover is desktop-only. A touch tap emits compatibility mouse events,
+      // so without this a tap would raise a tooltip on top of the state card
+      // it just opened, and then a stray mouseleave would clear it again.
       m.on("mousemove", "county-fill", (e) => {
+        if (isMobileRef.current) return;
         if (levelRef.current !== "county" || !e.features?.length) return;
         const feat = e.features[0];
         popup.setLngLat(e.lngLat)
@@ -361,6 +375,7 @@ export default function CountyMap({
       });
 
       m.on("mousemove", "state-fill", (e) => {
+        if (isMobileRef.current) return;
         if (levelRef.current !== "state" || !e.features?.length) return;
         const feat = e.features[0];
         popup.setLngLat(e.lngLat)
@@ -369,8 +384,13 @@ export default function CountyMap({
         m.getCanvas().style.cursor = "pointer";
       });
 
-      m.on("mouseleave", "county-fill", () => { popup.remove(); m.getCanvas().style.cursor = ""; });
-      m.on("mouseleave", "state-fill", () => { popup.remove(); m.getCanvas().style.cursor = ""; });
+      const clearHover = () => {
+        if (isMobileRef.current) return;
+        popup.remove();
+        m.getCanvas().style.cursor = "";
+      };
+      m.on("mouseleave", "county-fill", clearHover);
+      m.on("mouseleave", "state-fill", clearHover);
 
       // Click
       m.on("click", "county-fill", (e) => {
@@ -456,6 +476,16 @@ export default function CountyMap({
     const m = map.current;
     if (!m) return;
 
+    // A fresh selection always reopens the card, even if it was hidden while
+    // the previous state was selected — otherwise a tap answers with nothing.
+    if (selectedState) setShowPanel(true);
+
+    // On a phone, tapping a state is a request for that state's numbers, not a
+    // navigation. The card carries every detail, so the map stays where it is
+    // — dropping into counties on a 334px map buries what was asked for and
+    // costs a tap to undo. Counties are still reachable from the toggle.
+    if (isMobileRef.current) return;
+
     if (!selectedState) {
       // Zoom back out
       m.fitBounds(US_BOUNDS, { padding: fitPadding(isMobileRef.current), duration: 800 });
@@ -466,7 +496,6 @@ export default function CountyMap({
 
     // Switch to county view + thicken state borders
     setLevel("county");
-    setShowPanel(true);
     try { m.setPaintProperty("state-borders", "line-width", 2.5); } catch {}
 
     // Find state FIPS and zoom to its bounds
@@ -515,8 +544,10 @@ export default function CountyMap({
             onClick={() => onStateClickRef.current?.("")}
             style={{ fontSize: 11, fontWeight: 600, color: "var(--blue-main)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-            Back to US
+            {isMobile
+              ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>}
+            {isMobile ? "Clear" : "Back to US"}
           </button>
         ) : <div />}
         <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -567,7 +598,7 @@ export default function CountyMap({
         />
 
         {/* Show/hide panel button */}
-        {selectedState && countyData.length > 0 && !showPanel && (
+        {selectedState && !showPanel && (
           <button
             onClick={() => setShowPanel(true)}
             style={{
@@ -584,15 +615,21 @@ export default function CountyMap({
         )}
 
         {/* Floating info card — right side */}
-        {selectedState && countyData.length > 0 && showPanel && (() => {
+        {selectedState && showPanel && (() => {
           const stateAaa = aaaStates.find((s) => s.state === selectedState);
           const stateName = stateAaa?.state_name || selectedState;
+          const stateChange = stateChanges.find((s) => s.state === selectedState);
+          const chg = metric === "price" ? null : stateChange?.[metric] ?? null;
           const countyLabel = selectedState === "LA" ? "parishes" : selectedState === "AK" ? "boroughs/areas" : "counties";
           return (
             <div style={{
               position: "absolute", zIndex: 20,
               ...(isMobile
-                ? { left: 6, right: 6, bottom: 6, maxHeight: "50%", borderTop: "3px solid var(--blue-main)" }
+                // The phone map is ~190px tall, so a half-height sheet left the
+                // county list clipped to nothing. On mobile this card *is* the
+                // detail view, so it takes most of the map and keeps a sliver
+                // of context; Hide gives the map back.
+                ? { left: 6, right: 6, bottom: 6, maxHeight: "85%", borderTop: "3px solid var(--blue-main)" }
                 : { top: 6, right: 6, bottom: 6, width: 200, borderLeft: "3px solid var(--blue-main)" }
               ),
               background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)",
@@ -625,9 +662,23 @@ export default function CountyMap({
                   </div>
                 );
               })()}
-              <div style={{ fontSize: 8, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3 }}>
-                {countyData.length} {countyLabel}
-              </div>
+              {/* Change for whichever window the map is painting. Labelled
+                  "statewide" on purpose: this is the state series, which is
+                  daily, while the counties underneath are anchored to the
+                  prior Monday's scrape. */}
+              {chg != null && (
+                <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 4, color: chg > 0 ? "#a03030" : chg < 0 ? "#10b981" : "var(--blue-mid)" }}>
+                  {fmtCents(chg)}
+                  <span style={{ fontWeight: 500, color: "var(--blue-mid)", marginLeft: 4 }}>
+                    statewide, {metric === "chg7" ? "7" : "28"}-day
+                  </span>
+                </div>
+              )}
+              {countyData.length > 0 && (
+                <div style={{ fontSize: 8, fontWeight: 600, color: "var(--blue-mid)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3 }}>
+                  {countyData.length} {countyLabel}
+                </div>
+              )}
               <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
                 {countyData.map((c, i) => (
                   <div key={c.county} style={{
@@ -658,6 +709,11 @@ export default function CountyMap({
         const compared = isChange
           ? (metric === "chg7" ? activeDates?.d7 : activeDates?.d28)
           : null;
+        // The change ramp saturates at the 95th percentile of |change|, so its
+        // end labels are not the largest moves — 153 of 3,065 counties sit past
+        // them in a typical week. Name the true extremes rather than let the
+        // ramp's ends be read as the record rise and fall.
+        const clipped = !!scale && isChange && (scale.hi > bound || scale.lo < -bound);
         return (
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{lo}</span>
@@ -666,9 +722,20 @@ export default function CountyMap({
               background: `linear-gradient(to right, ${rampFor(metric).join(", ")})`,
             }} />
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{hi}</span>
-            <span>per gallon</span>
-            <span style={{ marginLeft: 8, color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
-            <span>No data</span>
+            {/* In a change view on a phone the unit is already carried by the
+                ¢ on both ends, and the words cost a whole extra legend line. */}
+            {!(isMobile && isChange) && <span>per gallon</span>}
+            {clipped && scale && (
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                Full range {fmtCents(scale.lo)} to {fmtCents(scale.hi)}
+              </span>
+            )}
+            {/* One item, so a wrap never strands the swatch on the line above
+                its label. */}
+            <span style={{ marginLeft: 8, display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+              <span style={{ color: "#ccc", WebkitTextStroke: "0.5px #999" }}>&#9632;</span>
+              No data
+            </span>
             {isChange && compared && activeDates?.anchor && (
               <span style={{ marginLeft: "auto" }}>{compared} to {activeDates.anchor}</span>
             )}

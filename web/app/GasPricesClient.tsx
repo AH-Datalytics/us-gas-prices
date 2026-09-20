@@ -397,7 +397,12 @@ export default function GasPricesClient({
             </ResponsiveContainer>
           </div>
           <div className="flex items-center justify-between">
-            <div className="source">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank" rel="noopener noreferrer">EIA Weekly Retail Gasoline and Diesel Prices</a>.{showForecast ? <> Forecast: <a href="https://www.eia.gov/outlooks/steo/" target="_blank" rel="noopener noreferrer">EIA Short-Term Energy Outlook (STEO)</a>, updated monthly.</> : ""}{realDollars ? <> Prices adjusted for inflation to {CPI_BASE_LABEL} dollars using the <a href="https://www.bls.gov/cpi/" target="_blank" rel="noopener noreferrer">BLS Consumer Price Index</a> (CPI-U, all items, seasonally adjusted){latestCpiMonth ? <>; dates after {fmtMonth(latestCpiMonth)} use the latest available index</> : ""}.</> : ""}</div>
+            {/* The phone trims this to the shortest wording that still names
+                and links every source. At full length it runs to two lines on
+                a 320px screen, three with Forecast on and up to seven with
+                Inflation Adj. — the series names, not the layout, are what
+                overflow. */}
+            <div className="source">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank" rel="noopener noreferrer">{isMobile ? "EIA Weekly Retail Prices" : "EIA Weekly Retail Gasoline and Diesel Prices"}</a>.{showForecast ? (isMobile ? <> Forecast: <a href="https://www.eia.gov/outlooks/steo/" target="_blank" rel="noopener noreferrer">EIA STEO</a>.</> : <> Forecast: <a href="https://www.eia.gov/outlooks/steo/" target="_blank" rel="noopener noreferrer">EIA Short-Term Energy Outlook (STEO)</a>, updated monthly.</>) : ""}{realDollars ? (isMobile ? <> In {CPI_BASE_LABEL} dollars (<a href="https://www.bls.gov/cpi/" target="_blank" rel="noopener noreferrer">BLS CPI-U</a>){latestCpiMonth ? <>, latest index after {fmtMonth(latestCpiMonth)}</> : ""}.</> : <> Prices adjusted for inflation to {CPI_BASE_LABEL} dollars using the <a href="https://www.bls.gov/cpi/" target="_blank" rel="noopener noreferrer">BLS Consumer Price Index</a> (CPI-U, all items, seasonally adjusted){latestCpiMonth ? <>; dates after {fmtMonth(latestCpiMonth)} use the latest available index</> : ""}.</>) : ""}</div>
             <img src="/logo-navy.png" alt="AH Datalytics" style={{ height: 16, opacity: 0.4 }} />
           </div>
         </div>
