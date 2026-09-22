@@ -48,19 +48,16 @@ const PRICE_STOPS = [3.5, 3.7, 3.85, 4.0, 4.25, 5.0, 6.0];
  */
 const CHANGE_RAMP = ["#2d5f8a", "#6a9bc4", "#f5f0e8", "#d4826a", "#a03030"];
 
-const rampFor = (metric: MapMetric) => (metric === "price" ? PRICE_RAMP : CHANGE_RAMP);
-
-/** Format a dollar change as cents: 0.032 -> "+3.2c". */
+/**
+ * Format a dollar change: cents below a dollar (0.032 -> "+3.2c"), dollars at
+ * or past one (1.10 -> "+$1.10"). Counties can move more than a dollar in a
+ * month, and "+110.0c" is a number the reader has to convert in their head.
+ */
 function fmtCents(d: number | null | undefined): string {
   if (d == null) return "—";
-  const cents = d * 100;
-  const sign = cents > 0 ? "+" : cents < 0 ? "-" : "";
-  return `${sign}${Math.abs(cents).toFixed(1)}¢`;
-}
-
-function pct(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+  const sign = d > 0 ? "+" : d < 0 ? "-" : "";
+  const abs = Math.abs(d);
+  return abs >= 1 ? `${sign}$${abs.toFixed(2)}` : `${sign}${(abs * 100).toFixed(1)}¢`;
 }
 
 /**
@@ -77,38 +74,43 @@ function ensureAscending(stops: number[]): number[] {
 }
 
 /**
- * `lo`/`hi` are the extremes actually present in the data, which a clipped
- * ramp never reaches. The legend quotes them so the ends of the ramp are not
- * mistaken for the largest moves.
+ * A scale carries its own colours because a one-sided week uses only half the
+ * diverging ramp, and the legend has to draw exactly what the map paints.
  */
-interface Scale { stops: number[]; bound: number; lo: number; hi: number }
+interface Scale { stops: number[]; ramp: string[] }
 
 /** Price uses fixed dollar breaks, so it ignores the data it is handed. */
 function priceScale(): Scale {
-  return { stops: PRICE_STOPS, bound: 0, lo: 0, hi: 0 };
+  return { stops: PRICE_STOPS, ramp: PRICE_RAMP };
 }
 
 /**
- * Diverging scale centred on zero. The domain is symmetric so that a 3c rise
- * and a 3c fall read as equally intense; an asymmetric domain would make a
- * week where everything moved one way look far more extreme than it was.
+ * Diverging scale anchored at zero and stretched to the real extremes, so the
+ * ends of the legend ARE the largest fall and the largest rise. The two arms
+ * are therefore unequal, and a 3c fall does not read as intensely as a 3c
+ * rise in a week dominated by rises. That is the accepted cost of a legend
+ * whose numbers exist: clipping at the 95th percentile put ends on the legend
+ * that nothing ever reached, and in a week where almost everything rose it
+ * spent the entire blue half on values no feature had.
+ *
+ * When every move went one way the ramp keeps only the half it needs, so the
+ * unused hue is not implied by a legend nothing sits on.
  */
 function changeScale(values: number[]): Scale {
-  const abs = values.map(Math.abs).sort((a, b) => a - b);
-  const bound = Math.max(pct(abs, 0.95), 0.01); // floor at 1c so a flat week still renders
-  return {
-    stops: ensureAscending([-bound, -bound / 2, 0, bound / 2, bound]),
-    bound,
-    lo: values.length ? Math.min(...values) : 0,
-    hi: values.length ? Math.max(...values) : 0,
-  };
+  const lo = Math.min(0, ...values);
+  const hi = Math.max(0, ...values);
+  // A dead-flat week has no span to interpolate across; a token one keeps
+  // every feature on the neutral midpoint instead of throwing.
+  if (lo === 0 && hi === 0) return { stops: [-0.01, -0.005, 0, 0.005, 0.01], ramp: CHANGE_RAMP };
+  if (lo === 0) return { stops: ensureAscending([0, hi / 2, hi]), ramp: CHANGE_RAMP.slice(2) };
+  if (hi === 0) return { stops: ensureAscending([lo, lo / 2, 0]), ramp: CHANGE_RAMP.slice(0, 3) };
+  return { stops: ensureAscending([lo, lo / 2, 0, hi / 2, hi]), ramp: CHANGE_RAMP };
 }
 
-function colorExpr(metric: MapMetric, stops: number[]): maplibregl.ExpressionSpecification {
-  const ramp = rampFor(metric);
-  // Ramps differ in length (7 sequential steps, 5 diverging), so zip rather
-  // than spelling the pairs out.
-  const pairs = stops.flatMap((stop, i) => [stop, ramp[i]]);
+function colorExpr(metric: MapMetric, scale: Scale): maplibregl.ExpressionSpecification {
+  // Ramps differ in length (7 sequential steps, 5 diverging, 3 one-sided), so
+  // zip rather than spelling the pairs out.
+  const pairs = scale.stops.flatMap((stop, i) => [stop, scale.ramp[i]]);
   return [
     "case",
     ["==", ["get", metric], null], "#ffffff",
@@ -270,7 +272,7 @@ export default function CountyMap({
         type: "fill",
         source: "states",
         paint: {
-          "fill-color": colorExpr(metricRef.current, stateScales[metricRef.current].stops),
+          "fill-color": colorExpr(metricRef.current, stateScales[metricRef.current]),
           "fill-opacity": 0.85,
         },
         layout: { visibility: "visible" },
@@ -325,7 +327,7 @@ export default function CountyMap({
         type: "fill",
         source: "counties",
         paint: {
-          "fill-color": colorExpr(metricRef.current, countyScales[metricRef.current].stops),
+          "fill-color": colorExpr(metricRef.current, countyScales[metricRef.current]),
           "fill-opacity": 0.85,
         },
         layout: { visibility: "none" },
@@ -433,8 +435,8 @@ export default function CountyMap({
     const sc = scalesRef.current;
     if (!m || loading || !sc) return;
     try {
-      m.setPaintProperty("state-fill", "fill-color", colorExpr(metric, sc.state[metric].stops));
-      m.setPaintProperty("county-fill", "fill-color", colorExpr(metric, sc.county[metric].stops));
+      m.setPaintProperty("state-fill", "fill-color", colorExpr(metric, sc.state[metric]));
+      m.setPaintProperty("county-fill", "fill-color", colorExpr(metric, sc.county[metric]));
     } catch {
       // layers may not exist yet
     }
@@ -701,35 +703,31 @@ export default function CountyMap({
       {(() => {
         const scale = scalesRef.current?.[level]?.[metric];
         const isChange = metric !== "price";
-        const bound = scale?.bound ?? 0;
+        const stops = scale?.stops ?? [];
         // Fixed price breaks mean the legend can name real dollars rather
-        // than a relative "Lower / Higher".
-        const lo = isChange ? fmtCents(-bound) : `$${PRICE_STOPS[0].toFixed(2)}`;
-        const hi = isChange ? fmtCents(bound) : `$${PRICE_STOPS[PRICE_STOPS.length - 1].toFixed(2)}+`;
+        // than a relative "Lower / Higher". A change scale now runs end to end
+        // of the data, so its own ends are the numbers to print.
+        const lo = isChange ? fmtCents(stops[0]) : `$${PRICE_STOPS[0].toFixed(2)}`;
+        const hi = isChange ? fmtCents(stops[stops.length - 1]) : `$${PRICE_STOPS[PRICE_STOPS.length - 1].toFixed(2)}+`;
         const compared = isChange
           ? (metric === "chg7" ? activeDates?.d7 : activeDates?.d28)
           : null;
-        // The change ramp saturates at the 95th percentile of |change|, so its
-        // end labels are not the largest moves — 153 of 3,065 counties sit past
-        // them in a typical week. Name the true extremes rather than let the
-        // ramp's ends be read as the record rise and fall.
-        const clipped = !!scale && isChange && (scale.hi > bound || scale.lo < -bound);
+        // The change arms are unequal, so evenly spaced colours would put the
+        // neutral midpoint somewhere other than zero. Place each colour at its
+        // own value's position instead, exactly as the map interpolates them.
+        const span = stops.length ? stops[stops.length - 1] - stops[0] : 0;
+        const gradient = isChange && scale && span > 0
+          ? scale.ramp.map((c, i) => `${c} ${(((stops[i] - stops[0]) / span) * 100).toFixed(1)}%`).join(", ")
+          : (scale?.ramp ?? PRICE_RAMP).join(", ");
         return (
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{lo}</span>
             <div style={{
               width: isMobile ? 100 : 140, height: 8, borderRadius: 4,
-              background: `linear-gradient(to right, ${rampFor(metric).join(", ")})`,
+              background: `linear-gradient(to right, ${gradient})`,
             }} />
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{hi}</span>
-            {/* In a change view on a phone the unit is already carried by the
-                ¢ on both ends, and the words cost a whole extra legend line. */}
-            {!(isMobile && isChange) && <span>per gallon</span>}
-            {clipped && scale && (
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                Full range {fmtCents(scale.lo)} to {fmtCents(scale.hi)}
-              </span>
-            )}
+            <span>per gallon</span>
             {/* One item, so a wrap never strands the swatch on the line above
                 its label. */}
             <span style={{ marginLeft: 8, display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
