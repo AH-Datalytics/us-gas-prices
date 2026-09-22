@@ -712,13 +712,14 @@ export default function CountyMap({
         const compared = isChange
           ? (metric === "chg7" ? activeDates?.d7 : activeDates?.d28)
           : null;
-        // The change arms are unequal, so evenly spaced colours would put the
-        // neutral midpoint somewhere other than zero. Place each colour at its
-        // own value's position instead, exactly as the map interpolates them.
-        const span = stops.length ? stops[stops.length - 1] - stops[0] : 0;
-        const gradient = isChange && scale && span > 0
-          ? scale.ramp.map((c, i) => `${c} ${(((stops[i] - stops[0]) / span) * 100).toFixed(1)}%`).join(", ")
-          : (scale?.ramp ?? PRICE_RAMP).join(", ");
+        // Evenly spaced colours, with the neutral midpoint at the centre of the
+        // bar. Each side of the map is normalised to its own extreme -- the
+        // darkest blue is the largest fall whatever its size, the darkest red
+        // the largest rise -- so equal halves are what the map actually does.
+        // Spacing the colours by value instead would squeeze the whole blue
+        // ramp into 2% of the bar in a week that fell 1c and rose 62c, hiding
+        // a colour the map paints at full strength.
+        const gradient = (scale?.ramp ?? PRICE_RAMP).join(", ");
         return (
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{lo}</span>
