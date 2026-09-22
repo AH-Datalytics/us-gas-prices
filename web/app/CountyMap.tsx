@@ -73,10 +73,7 @@ function ensureAscending(stops: number[]): number[] {
   return out;
 }
 
-/**
- * A scale carries its own colours because a one-sided week uses only half the
- * diverging ramp, and the legend has to draw exactly what the map paints.
- */
+/** A scale carries its own colours so the legend can draw what the map paints. */
 interface Scale { stops: number[]; ramp: string[] }
 
 /** Price uses fixed dollar breaks, so it ignores the data it is handed. */
@@ -85,31 +82,25 @@ function priceScale(): Scale {
 }
 
 /**
- * Diverging scale anchored at zero and stretched to the real extremes, so the
- * ends of the legend ARE the largest fall and the largest rise. The two arms
- * are therefore unequal, and a 3c fall does not read as intensely as a 3c
- * rise in a week dominated by rises. That is the accepted cost of a legend
- * whose numbers exist: clipping at the 95th percentile put ends on the legend
- * that nothing ever reached, and in a week where almost everything rose it
- * spent the entire blue half on values no feature had.
+ * Diverging scale, symmetric around zero, reaching the largest move in the
+ * data. Symmetry is what makes the shading mean something: a 2c fall and a 2c
+ * rise are equally pale, and one shade is one number of cents whichever
+ * direction it went. The bound is the true maximum rather than a percentile,
+ * so the ends of the legend are a move that actually happened -- clipping at
+ * the 95th percentile used to print +-26.8c in a week Delaware rose 33.9c.
  *
- * When every move went one way the ramp keeps only the half it needs, so the
- * unused hue is not implied by a legend nothing sits on.
+ * The cost is contrast: one county that moved a dollar sets the scale for
+ * three thousand that moved a dime, and the middle pales accordingly.
  */
 function changeScale(values: number[]): Scale {
-  const lo = Math.min(0, ...values);
-  const hi = Math.max(0, ...values);
-  // A dead-flat week has no span to interpolate across; a token one keeps
-  // every feature on the neutral midpoint instead of throwing.
-  if (lo === 0 && hi === 0) return { stops: [-0.01, -0.005, 0, 0.005, 0.01], ramp: CHANGE_RAMP };
-  if (lo === 0) return { stops: ensureAscending([0, hi / 2, hi]), ramp: CHANGE_RAMP.slice(2) };
-  if (hi === 0) return { stops: ensureAscending([lo, lo / 2, 0]), ramp: CHANGE_RAMP.slice(0, 3) };
-  return { stops: ensureAscending([lo, lo / 2, 0, hi / 2, hi]), ramp: CHANGE_RAMP };
+  // Floor at 1c so a dead-flat week still has a span to interpolate across.
+  const bound = Math.max(0.01, ...values.map(Math.abs));
+  return { stops: ensureAscending([-bound, -bound / 2, 0, bound / 2, bound]), ramp: CHANGE_RAMP };
 }
 
 function colorExpr(metric: MapMetric, scale: Scale): maplibregl.ExpressionSpecification {
-  // Ramps differ in length (7 sequential steps, 5 diverging, 3 one-sided), so
-  // zip rather than spelling the pairs out.
+  // Ramps differ in length (7 sequential steps, 5 diverging), so zip rather
+  // than spelling the pairs out.
   const pairs = scale.stops.flatMap((stop, i) => [stop, scale.ramp[i]]);
   return [
     "case",
@@ -705,20 +696,15 @@ export default function CountyMap({
         const isChange = metric !== "price";
         const stops = scale?.stops ?? [];
         // Fixed price breaks mean the legend can name real dollars rather
-        // than a relative "Lower / Higher". A change scale now runs end to end
-        // of the data, so its own ends are the numbers to print.
+        // than a relative "Lower / Higher". A change scale is symmetric, so
+        // its ends print as the same number of cents either way.
         const lo = isChange ? fmtCents(stops[0]) : `$${PRICE_STOPS[0].toFixed(2)}`;
         const hi = isChange ? fmtCents(stops[stops.length - 1]) : `$${PRICE_STOPS[PRICE_STOPS.length - 1].toFixed(2)}+`;
         const compared = isChange
           ? (metric === "chg7" ? activeDates?.d7 : activeDates?.d28)
           : null;
-        // Evenly spaced colours, with the neutral midpoint at the centre of the
-        // bar. Each side of the map is normalised to its own extreme -- the
-        // darkest blue is the largest fall whatever its size, the darkest red
-        // the largest rise -- so equal halves are what the map actually does.
-        // Spacing the colours by value instead would squeeze the whole blue
-        // ramp into 2% of the bar in a week that fell 1c and rose 62c, hiding
-        // a colour the map paints at full strength.
+        // Evenly spaced colours: the change domain is symmetric, so equal
+        // halves of the bar are equal numbers of cents on either side of zero.
         const gradient = (scale?.ramp ?? PRICE_RAMP).join(", ");
         return (
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 10, color: "var(--blue-mid)" }}>
