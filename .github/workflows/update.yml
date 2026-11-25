@@ -39,20 +39,37 @@ jobs:
           git diff --cached --quiet || git commit -m "Auto-update database [skip ci]"
           git push
 
+      # Data is collected daily (AAA only publishes the current day, so skipping
+      # days would lose history), but the site is deployed only on Mondays or on a
+      # manual run. Changed 2026-11-25: each deploy is a billed Vercel build.
+      - name: Decide whether to deploy
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$(date -u +%u)" = "1" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Not Monday; data committed, deploy skipped."
+          fi
+
       - name: Set up Node.js
+        if: steps.gate.outputs.deploy == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install web dependencies
+        if: steps.gate.outputs.deploy == 'true'
         working-directory: web
         run: npm ci
 
       - name: Build
+        if: steps.gate.outputs.deploy == 'true'
         working-directory: web
         run: npm run build
 
       - name: Deploy to Vercel
+        if: steps.gate.outputs.deploy == 'true'
         working-directory: web
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
